@@ -19,16 +19,22 @@ class ProtocolDTO
 
     public static function fromModel($protocol): self
     {
+        // Efficiently transform tags without Collections
+        $transformedTags = [];
+        if (is_array($protocol->tags)) {
+            foreach ($protocol->tags as $index => $tag) {
+                $transformedTags[] = [
+                    'id' => $index + 1,
+                    'tag' => $tag,
+                ];
+            }
+        }
+
         return new self(
             id: $protocol->id,
             title: $protocol->title ?? '',
             content: $protocol->content ?? '',
-            tags: is_array($protocol->tags) ? collect($protocol->tags)->map(function ($tag, $index) {
-                return [
-                    'id' => $index + 1,
-                    'tag' => $tag,
-                ];
-            })->values()->toArray() : [],
+            tags: $transformedTags,
             author: $protocol->author ?? '',
             reviews_count: $protocol->reviews_count ?? null,
             threads_count: $protocol->threads_count ?? null,
