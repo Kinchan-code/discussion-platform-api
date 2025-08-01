@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
 use App\Models\User;
 use App\Models\Protocol;
 use App\Models\Thread;
@@ -39,7 +40,19 @@ class DatabaseSeeder extends Seeder
     {
 
         // Create users first
-        $users = User::factory(5)->create();
+        $usersData = User::factory()->count(5)->make()->map(function ($user) {
+            return [
+                'name' => $user->name,
+                'email' => $user->email,
+                'email_verified_at' => $user->email_verified_at ? $user->email_verified_at->format('Y-m-d H:i:s') : null,
+                'password' => $user->password,
+                'remember_token' => $user->remember_token,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ];
+        })->toArray();
+        User::insert($usersData);
+        $users = User::all();
 
         // Create protocols with realistic wellness data - use actual user names as authors
         $protocols = [
@@ -117,10 +130,17 @@ class DatabaseSeeder extends Seeder
             ],
         ];
 
+        DB::beginTransaction();
         $createdProtocols = [];
-        foreach ($protocols as $protocolData) {
-            $protocol = Protocol::create($protocolData);
-            $createdProtocols[] = $protocol;
+        try {
+            foreach ($protocols as $protocolData) {
+                $protocol = Protocol::create($protocolData);
+                $createdProtocols[] = $protocol;
+            }
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
         }
 
         // Create threads for each protocol
@@ -153,15 +173,19 @@ class DatabaseSeeder extends Seeder
         foreach ($createdProtocols as $protocol) {
             // Create 2-3 threads per protocol
             $threadCount = rand(2, 3);
+            $threadData = [];
             for ($i = 0; $i < $threadCount; $i++) {
-                $thread = Thread::create([
+                $threadData[] = [
                     'protocol_id' => $protocol->getKey(),
                     'title' => $threadTitles[array_rand($threadTitles)],
                     'body' => $threadBodies[array_rand($threadBodies)],
                     'author' => $users->random()->name,
-                ]);
-                $createdThreads[] = $thread;
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
             }
+            Thread::insert($threadData);
+            $createdThreads = array_merge($createdThreads, Thread::where('protocol_id', $protocol->getKey())->get()->all());
         }
 
         // Create comments for threads and votes for both threads and comments
@@ -184,19 +208,28 @@ class DatabaseSeeder extends Seeder
             $commentCount = rand(3, 6);
             $threadComments = [];
 
+            $commentData = [];
             for ($i = 0; $i < $commentCount; $i++) {
-                $comment = Comment::create([
+                $commentData[] = [
                     'thread_id' => $thread->getKey(),
                     'parent_id' => null,
                     'body' => $commentBodies[array_rand($commentBodies)],
                     'author' => $users->random()->name,
-                ]);
-                $threadComments[] = $comment;
-                $allComments[] = $comment;
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
+            }
+            if (!empty($commentData)) {
+                Comment::insert($commentData);
+                $threadComments = array_merge($threadComments, Comment::where('thread_id', $thread->getKey())->get()->all());
+                $allComments = array_merge($allComments, $threadComments);
+            }
 
-                // Create 1-3 replies to some comments
+            // Create 1-3 replies for some comments
+            foreach ($threadComments as $comment) {
                 if (rand(0, 1)) {
                     $replyCount = rand(1, 3);
+                    $replyData = [];
                     $replyBodies = [
                         'Thanks for sharing your experience!',
                         'I agree with your point.',
@@ -210,40 +243,56 @@ class DatabaseSeeder extends Seeder
                         'Great advice!',
                     ];
                     for ($j = 0; $j < $replyCount; $j++) {
-                        $reply = Comment::create([
+                        $replyData[] = [
                             'thread_id' => $thread->getKey(),
                             'parent_id' => $comment->getKey(),
                             'body' => $replyBodies[array_rand($replyBodies)],
                             'author' => $users->random()->name,
-                        ]);
-                        $threadComments[] = $reply;
-                        $allComments[] = $reply;
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ];
+                    }
+                    if (!empty($replyData)) {
+                        Comment::insert($replyData);
+                        $allComments = array_merge($allComments, Comment::where('thread_id', $thread->getKey())->get()->all());
                     }
                 }
             }
 
             // Vote on threads - ensure unique votes per user
+            $threadVoteData = [];
             $threadVoters = $users->random(min(3, $users->count()));
             foreach ($threadVoters as $user) {
-                Vote::create([
+                $threadVoteData[] = [
                     'user_id' => $user->id,
                     'votable_type' => Thread::class,
                     'votable_id' => $thread->getKey(),
                     'type' => rand(0, 1) ? 'upvote' : 'downvote',
-                ]);
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
+            }
+            if (!empty($threadVoteData)) {
+                Vote::insert($threadVoteData);
             }
 
             // Vote on comments - ensure unique votes per user
+            $commentVoteData = [];
             foreach ($threadComments as $comment) {
                 $commentVoters = $users->random(min(2, $users->count()));
                 foreach ($commentVoters as $user) {
-                    Vote::create([
+                    $commentVoteData[] = [
                         'user_id' => $user->id,
                         'votable_type' => Comment::class,
                         'votable_id' => $comment->getKey(),
                         'type' => rand(0, 1) ? 'upvote' : 'downvote',
-                    ]);
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ];
                 }
+            }
+            if (!empty($commentVoteData)) {
+                Vote::insert($commentVoteData);
             }
         }
 
@@ -260,17 +309,30 @@ class DatabaseSeeder extends Seeder
             'Not sure if it works for everyone, but it worked for me.',
             'Affordable and practical.',
         ];
-        foreach ($createdProtocols as $protocol) {
-            // Create 2-5 reviews per protocol
-            $reviewCount = rand(2, 5);
-            for ($i = 0; $i < $reviewCount; $i++) {
-                Review::create([
-                    'protocol_id' => $protocol->getKey(),
-                    'rating' => rand(3, 5),
-                    'feedback' => $reviewFeedbacks[array_rand($reviewFeedbacks)],
-                    'author' => $users->random()->name,
-                ]);
+        DB::beginTransaction();
+        try {
+            foreach ($createdProtocols as $protocol) {
+                // Create 2-5 reviews per protocol
+                $reviewCount = rand(2, 5);
+                $reviewData = [];
+                for ($i = 0; $i < $reviewCount; $i++) {
+                    $reviewData[] = [
+                        'protocol_id' => $protocol->getKey(),
+                        'rating' => rand(3, 5),
+                        'feedback' => $reviewFeedbacks[array_rand($reviewFeedbacks)],
+                        'author' => $users->random()->name,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ];
+                }
+                if (!empty($reviewData)) {
+                    Review::insert($reviewData);
+                }
             }
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
         }
 
         $this->command->info('Database seeded successfully!');
