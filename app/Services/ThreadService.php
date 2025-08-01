@@ -43,10 +43,17 @@ class ThreadService
         $query = Thread::with([
             'protocol' => function ($query) {
                 $query->select('id', 'title', 'content', 'tags', 'author', 'created_at', 'updated_at');
-            },
-            'votes'
+            }
         ])
-            ->withCount(['comments']);
+            ->withCount(['comments'])
+            ->withCount([
+                'votes as upvotes' => function ($q) {
+                    $q->where('type', 'upvote');
+                },
+                'votes as downvotes' => function ($q) {
+                    $q->where('type', 'downvote');
+                },
+            ]);
 
         if ($author) {
             $query->where('author', $author);
@@ -58,43 +65,25 @@ class ThreadService
 
         switch ($sort) {
             case 'popular':
-                $query->select('threads.*')
-                    ->leftJoin('votes', function ($join) {
-                        $join->on('threads.id', '=', 'votes.votable_id')
-                            ->where('votes.votable_type', '=', 'App\\Models\\Thread');
-                    })
-                    ->groupBy('threads.id')
-                    ->orderByRaw('COUNT(votes.id) DESC')
-                    ->orderBy('comments_count', 'desc')
-                    ->orderBy('created_at', 'desc');
+                $query->orderByDesc('upvotes')
+                    ->orderByDesc('comments_count')
+                    ->orderByDesc('created_at');
                 break;
             case 'rating':
-                $query->select('threads.*')
-                    ->leftJoin('votes', function ($join) {
-                        $join->on('threads.id', '=', 'votes.votable_id')
-                            ->where('votes.votable_type', '=', 'App\\Models\\Thread')
-                            ->where('votes.type', '=', 'upvote');
-                    })
-                    ->groupBy('threads.id')
-                    ->orderByRaw('COUNT(votes.id) DESC')
-                    ->orderBy('created_at', 'desc');
+                $query->orderByDesc('upvotes')
+                    ->orderByDesc('created_at');
                 break;
             case 'recent':
             default:
-                $query->orderBy('created_at', 'desc');
+                $query->orderByDesc('created_at');
                 break;
         }
 
         $threads = $query->paginate($perPage);
 
+        // Optionally, add vote_score attribute (upvotes - downvotes) for each thread
         $threads->getCollection()->transform(function ($thread) {
-            if ($thread->votes) {
-                $votesCollection = collect($thread->votes);
-                $thread->setAttribute('upvotes', $votesCollection->where('type', 'upvote')->count());
-                $thread->setAttribute('downvotes', $votesCollection->where('type', 'downvote')->count());
-                $thread->setAttribute('votes_count', $thread->votes->count());
-                $thread->setAttribute('vote_score', $thread->upvotes - $thread->downvotes);
-            }
+            $thread->vote_score = ($thread->upvotes ?? 0) - ($thread->downvotes ?? 0);
             return $thread;
         });
 
