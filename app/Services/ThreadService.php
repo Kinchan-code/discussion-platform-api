@@ -81,12 +81,6 @@ class ThreadService
 
         $threads = $query->paginate($perPage);
 
-        // Optionally, add vote_score attribute (upvotes - downvotes) for each thread
-        $threads->getCollection()->transform(function ($thread) {
-            $thread->vote_score = ($thread->upvotes ?? 0) - ($thread->downvotes ?? 0);
-            return $thread;
-        });
-
         return $threads;
     }
 

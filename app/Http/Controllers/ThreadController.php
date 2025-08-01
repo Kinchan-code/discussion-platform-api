@@ -101,10 +101,11 @@ class ThreadController extends Controller
 
             $threads = $service->listThreads($filters);
 
-            // Transform threads to DTOs
-            $threadDTOs = $threads->getCollection()->transform(function ($thread) {
-                return ThreadDTO::fromModel($thread)->toArray();
-            })->toArray();
+            // Transform threads to DTOs efficiently
+            $threadDTOs = [];
+            foreach ($threads->items() as $thread) {
+                $threadDTOs[] = ThreadDTO::fromModel($thread)->toArray();
+            }
 
             $paginationDTO = PaginationDTO::fromPaginator($threads);
 
@@ -403,10 +404,11 @@ class ThreadController extends Controller
             $service = new ThreadService();
             $threads = $service->getTrendingThreads($request->all());
 
-            // Transform threads to DTOs
-            $threadDTOs = $threads->getCollection()->transform(function ($thread) {
-                return ThreadDTO::fromModel($thread)->toArray();
-            })->toArray();
+            // Transform threads to DTOs efficiently
+            $threadDTOs = [];
+            foreach ($threads->items() as $thread) {
+                $threadDTOs[] = ThreadDTO::fromModel($thread)->toArray();
+            }
 
             $paginationDTO = PaginationDTO::fromPaginator($threads);
 
