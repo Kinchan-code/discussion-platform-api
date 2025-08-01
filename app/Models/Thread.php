@@ -42,9 +42,8 @@ class Thread extends Model
      * The accessors to append to the model's array form.
      */
     protected $appends = [
-        'upvotes',
-        'downvotes',
-        'vote_score',
+        // Removed upvotes, downvotes, vote_score to prevent N+1 queries
+        // These are now handled via withCount in services
     ];
 
 
