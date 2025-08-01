@@ -42,9 +42,8 @@ class Comment extends Model
      * The accessors to append to the model's array form.
      */
     protected $appends = [
-        'upvotes',
-        'downvotes',
-        'vote_score',
+        // Removed upvotes, downvotes, vote_score to prevent N+1 queries
+        // These should be handled via withCount in services when needed
     ];
 
 
