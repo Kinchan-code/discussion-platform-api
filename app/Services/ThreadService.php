@@ -126,16 +126,20 @@ class ThreadService
     {
         $perPage = $params['per_page'] ?? 15;
 
-        return Thread::with(['protocol'])
-            ->withCount(['comments', 'votes'])
-            ->withCount(['votes as upvotes' => function ($query) {
-                $query->where('type', 'upvote');
-            }])
-            ->withCount(['votes as downvotes' => function ($query) {
-                $query->where('type', 'downvote');
-            }])
-            ->where('protocol_id', $protocolId)
-            ->latest()
+        return Thread::select([
+            'threads.*',
+            'protocols.id as protocol_id_data',
+            'protocols.title as protocol_title',
+            'protocols.author as protocol_author',
+            DB::raw('(SELECT COUNT(*) FROM comments WHERE comments.thread_id = threads.id) as comments_count'),
+            DB::raw('(SELECT COUNT(*) FROM votes WHERE votes.thread_id = threads.id) as votes_count'),
+            DB::raw('(SELECT COUNT(*) FROM votes WHERE votes.thread_id = threads.id AND votes.type = "upvote") as upvotes'),
+            DB::raw('(SELECT COUNT(*) FROM votes WHERE votes.thread_id = threads.id AND votes.type = "downvote") as downvotes'),
+            DB::raw('(SELECT COALESCE(SUM(CASE WHEN votes.type = "upvote" THEN 1 WHEN votes.type = "downvote" THEN -1 ELSE 0 END), 0) FROM votes WHERE votes.thread_id = threads.id) as vote_score')
+        ])
+            ->leftJoin('protocols', 'threads.protocol_id', '=', 'protocols.id')
+            ->where('threads.protocol_id', $protocolId)
+            ->latest('threads.created_at')
             ->paginate($perPage);
     }
 
@@ -224,15 +228,19 @@ class ThreadService
     {
         $perPage = $params['per_page'] ?? 3;
 
-        return Thread::with(['protocol'])
-            ->withCount(['comments', 'votes'])
-            ->withCount(['votes as upvotes' => function ($query) {
-                $query->where('type', 'upvote');
-            }])
-            ->withCount(['votes as downvotes' => function ($query) {
-                $query->where('type', 'downvote');
-            }])
-            ->orderBy('created_at', 'desc')
+        return Thread::select([
+            'threads.*',
+            'protocols.id as protocol_id_data',
+            'protocols.title as protocol_title',
+            'protocols.author as protocol_author',
+            DB::raw('(SELECT COUNT(*) FROM comments WHERE comments.thread_id = threads.id) as comments_count'),
+            DB::raw('(SELECT COUNT(*) FROM votes WHERE votes.thread_id = threads.id) as votes_count'),
+            DB::raw('(SELECT COUNT(*) FROM votes WHERE votes.thread_id = threads.id AND votes.type = "upvote") as upvotes'),
+            DB::raw('(SELECT COUNT(*) FROM votes WHERE votes.thread_id = threads.id AND votes.type = "downvote") as downvotes'),
+            DB::raw('(SELECT COALESCE(SUM(CASE WHEN votes.type = "upvote" THEN 1 WHEN votes.type = "downvote" THEN -1 ELSE 0 END), 0) FROM votes WHERE votes.thread_id = threads.id) as vote_score')
+        ])
+            ->leftJoin('protocols', 'threads.protocol_id', '=', 'protocols.id')
+            ->orderBy('threads.created_at', 'desc')
             ->paginate($perPage);
     }
 }
