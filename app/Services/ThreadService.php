@@ -132,10 +132,10 @@ class ThreadService
             'protocols.title as protocol_title',
             'protocols.author as protocol_author',
             DB::raw('(SELECT COUNT(*) FROM comments WHERE comments.thread_id = threads.id) as comments_count'),
-            DB::raw('(SELECT COUNT(*) FROM votes WHERE votes.thread_id = threads.id) as votes_count'),
-            DB::raw('(SELECT COUNT(*) FROM votes WHERE votes.thread_id = threads.id AND votes.type = "upvote") as upvotes'),
-            DB::raw('(SELECT COUNT(*) FROM votes WHERE votes.thread_id = threads.id AND votes.type = "downvote") as downvotes'),
-            DB::raw('(SELECT COALESCE(SUM(CASE WHEN votes.type = "upvote" THEN 1 WHEN votes.type = "downvote" THEN -1 ELSE 0 END), 0) FROM votes WHERE votes.thread_id = threads.id) as vote_score')
+            DB::raw('(SELECT COUNT(*) FROM votes WHERE votes.votable_id = threads.id AND votes.votable_type = "App\\\\Models\\\\Thread") as votes_count'),
+            DB::raw('(SELECT COUNT(*) FROM votes WHERE votes.votable_id = threads.id AND votes.votable_type = "App\\\\Models\\\\Thread" AND votes.type = "upvote") as upvotes'),
+            DB::raw('(SELECT COUNT(*) FROM votes WHERE votes.votable_id = threads.id AND votes.votable_type = "App\\\\Models\\\\Thread" AND votes.type = "downvote") as downvotes'),
+            DB::raw('(SELECT COALESCE(SUM(CASE WHEN votes.type = "upvote" THEN 1 WHEN votes.type = "downvote" THEN -1 ELSE 0 END), 0) FROM votes WHERE votes.votable_id = threads.id AND votes.votable_type = "App\\\\Models\\\\Thread") as vote_score')
         ])
             ->leftJoin('protocols', 'threads.protocol_id', '=', 'protocols.id')
             ->where('threads.protocol_id', $protocolId)
@@ -234,10 +234,10 @@ class ThreadService
             'protocols.title as protocol_title',
             'protocols.author as protocol_author',
             DB::raw('(SELECT COUNT(*) FROM comments WHERE comments.thread_id = threads.id) as comments_count'),
-            DB::raw('(SELECT COUNT(*) FROM votes WHERE votes.thread_id = threads.id) as votes_count'),
-            DB::raw('(SELECT COUNT(*) FROM votes WHERE votes.thread_id = threads.id AND votes.type = "upvote") as upvotes'),
-            DB::raw('(SELECT COUNT(*) FROM votes WHERE votes.thread_id = threads.id AND votes.type = "downvote") as downvotes'),
-            DB::raw('(SELECT COALESCE(SUM(CASE WHEN votes.type = "upvote" THEN 1 WHEN votes.type = "downvote" THEN -1 ELSE 0 END), 0) FROM votes WHERE votes.thread_id = threads.id) as vote_score')
+            DB::raw('(SELECT COUNT(*) FROM votes WHERE votes.votable_id = threads.id AND votes.votable_type = "App\\\\Models\\\\Thread") as votes_count'),
+            DB::raw('(SELECT COUNT(*) FROM votes WHERE votes.votable_id = threads.id AND votes.votable_type = "App\\\\Models\\\\Thread" AND votes.type = "upvote") as upvotes'),
+            DB::raw('(SELECT COUNT(*) FROM votes WHERE votes.votable_id = threads.id AND votes.votable_type = "App\\\\Models\\\\Thread" AND votes.type = "downvote") as downvotes'),
+            DB::raw('(SELECT COALESCE(SUM(CASE WHEN votes.type = "upvote" THEN 1 WHEN votes.type = "downvote" THEN -1 ELSE 0 END), 0) FROM votes WHERE votes.votable_id = threads.id AND votes.votable_type = "App\\\\Models\\\\Thread") as vote_score')
         ])
             ->leftJoin('protocols', 'threads.protocol_id', '=', 'protocols.id')
             ->orderBy('threads.created_at', 'desc')
