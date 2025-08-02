@@ -97,23 +97,20 @@ class ThreadService
      */
     public function getThread($id): ?Thread
     {
-        $thread = Thread::with([
-            'protocol' => function ($query) {
-                $query->select('id', 'title', 'author'); // Minimal protocol data for performance
-            },
-            'votes' // Eager load votes for efficient counting
+        $thread = Thread::select([
+            'threads.*',
+            'protocols.id as protocol_id_data',
+            'protocols.title as protocol_title',
+            'protocols.author as protocol_author'
         ])
+            ->leftJoin('protocols', 'threads.protocol_id', '=', 'protocols.id')
             ->withCount(['comments'])
+            ->withCount([
+                'votes as vote_score' => function ($q) {
+                    $q->selectRaw('SUM(CASE WHEN type = "upvote" THEN 1 WHEN type = "downvote" THEN -1 ELSE 0 END)');
+                }
+            ])
             ->findOrFail($id);
-
-        if ($thread && $thread->votes) {
-            // Calculate vote counts efficiently
-            $votesCollection = collect($thread->votes);
-            $thread->setAttribute('upvotes', $votesCollection->where('type', 'upvote')->count());
-            $thread->setAttribute('downvotes', $votesCollection->where('type', 'downvote')->count());
-            $thread->setAttribute('votes_count', $thread->votes->count());
-            $thread->setAttribute('vote_score', $thread->getAttribute('upvotes') - $thread->getAttribute('downvotes'));
-        }
 
         return $thread;
     }

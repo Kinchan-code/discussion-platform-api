@@ -28,7 +28,7 @@ class ThreadDTO
             $protocol = [
                 'id' => $thread->protocol_id_data ?? $thread->protocol_id,
                 'title' => $thread->protocol_title,
-                'author' => null, // Not needed for UI
+                'author' => $thread->protocol_author ?? null,
             ];
         }
 
