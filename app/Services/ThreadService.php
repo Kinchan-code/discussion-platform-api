@@ -14,21 +14,20 @@ use Illuminate\Support\Facades\DB;
  * Handles thread listing, retrieval, creation, updating, deletion, and statistics for the platform.
  * Provides methods for paginated thread queries, filtering, sorting, trending, and efficient vote/comment aggregation.
  *
- * PERFORMANCE NOTE: The listThreads() method has been optimized with JOIN queries instead of relationships
- * to reduce database round trips from 4+ queries to 1 single query. The previous relationship-based 
- * approach is commented out and can be easily reverted if needed.
+ * PERFORMANCE NOTE: Reverted to relationship-based queries for stability. JOIN optimization was attempted
+ * but caused pagination issues and didn't improve performance on AWS RDS Free Tier infrastructure.
  *
  * Features:
- * - Paginated thread listing with filters and sorting (OPTIMIZED with JOIN approach)
+ * - Paginated thread listing with filters and sorting (using stable relationship approach)
  * - Thread creation, update, and deletion
- * - Efficient vote and comment aggregation via SQL aggregation
+ * - Efficient vote and comment aggregation via withCount
  * - Trending and protocol-specific thread queries
  *
  * @package App\Services
  * @author Christian Bangay
- * @version 1.1.0 (Performance optimized)
+ * @version 1.2.0 (Reverted to stable approach)
  * @since 2025-07-31
- * @updated 2025-08-03 (JOIN optimization for RDS performance)
+ * @updated 2025-08-03 (Reverted JOIN optimization due to pagination issues)
  *
  * @see App\Models\Thread
  */
@@ -47,83 +46,45 @@ class ThreadService
         $protocolId = $params['protocol_id'] ?? null;
         $author = $params['author'] ?? null;
 
-        // NEW APPROACH: Single JOIN query - much faster than relationships
-        // This eliminates multiple database round trips by using LEFT JOINs
-        $query = Thread::select([
-            'threads.*',
-            'protocols.id as protocol_id_data',
-            'protocols.title as protocol_title',
-            'protocols.author as protocol_author',
-            DB::raw('COUNT(DISTINCT comments.id) as comments_count'),
-            DB::raw('COUNT(DISTINCT CASE WHEN votes.type = "upvote" THEN votes.id END) as upvotes'),
-            DB::raw('COUNT(DISTINCT CASE WHEN votes.type = "downvote" THEN votes.id END) as downvotes'),
+        // REVERTED TO PREVIOUS APPROACH - JOIN approach caused pagination issues and no performance improvement
+        $query = Thread::with([
+            'protocol' => function ($query) {
+                $query->select('id', 'title', 'author'); // Minimal protocol data for performance
+            }
         ])
-            ->leftJoin('protocols', 'threads.protocol_id', '=', 'protocols.id')
-            ->leftJoin('comments', 'threads.id', '=', 'comments.thread_id')
-            ->leftJoin('votes', function ($join) {
-                $join->on('threads.id', '=', 'votes.votable_id')
-                    ->where('votes.votable_type', '=', 'App\\Models\\Thread');
-            })
-            ->groupBy('threads.id', 'protocols.id', 'protocols.title', 'protocols.author');
-
-        // COMMENTED OUT - PREVIOUS APPROACH (can be reverted if JOIN approach fails)
-        // $query = Thread::with([
-        //     'protocol' => function ($query) {
-        //         $query->select('id', 'title', 'author'); // Minimal protocol data for performance
-        //     }
-        // ])
-        //     ->withCount(['comments']) // Keep comments count as needed
-        //     ->withCount([
-        //         'votes as upvotes' => function ($q) {
-        //             $q->where('type', 'upvote');
-        //         },
-        //         'votes as downvotes' => function ($q) {
-        //             $q->where('type', 'downvote');
-        //         },
-        //     ]);
+            ->withCount(['comments']) // Keep comments count as needed
+            ->withCount([
+                'votes as upvotes' => function ($q) {
+                    $q->where('type', 'upvote');
+                },
+                'votes as downvotes' => function ($q) {
+                    $q->where('type', 'downvote');
+                },
+            ]);
 
         if ($author) {
-            $query->where('threads.author', $author);
+            $query->where('author', $author);
         }
 
         if ($protocolId) {
-            $query->where('threads.protocol_id', $protocolId);
+            $query->where('protocol_id', $protocolId);
         }
 
         switch ($sort) {
             case 'popular':
-                // NEW APPROACH: Order by aggregated counts from JOIN
-                $query->orderBy(DB::raw('COUNT(DISTINCT CASE WHEN votes.type = "upvote" THEN votes.id END)'), 'desc')
-                    ->orderBy(DB::raw('COUNT(DISTINCT comments.id)'), 'desc')
-                    ->orderBy('threads.created_at', 'desc');
+                $query->orderByDesc('upvotes')
+                    ->orderByDesc('comments_count')
+                    ->orderByDesc('created_at');
                 break;
             case 'rating':
-                // NEW APPROACH: Order by upvotes from JOIN
-                $query->orderBy(DB::raw('COUNT(DISTINCT CASE WHEN votes.type = "upvote" THEN votes.id END)'), 'desc')
-                    ->orderBy('threads.created_at', 'desc');
+                $query->orderByDesc('upvotes')
+                    ->orderByDesc('created_at');
                 break;
             case 'recent':
             default:
-                $query->orderBy('threads.created_at', 'desc');
+                $query->orderByDesc('created_at');
                 break;
         }
-
-        // COMMENTED OUT - PREVIOUS APPROACH SORTING (can be reverted)
-        // switch ($sort) {
-        //     case 'popular':
-        //         $query->orderByDesc('upvotes')
-        //             ->orderByDesc('comments_count')
-        //             ->orderByDesc('created_at');
-        //         break;
-        //     case 'rating':
-        //         $query->orderByDesc('upvotes')
-        //             ->orderByDesc('created_at');
-        //         break;
-        //     case 'recent':
-        //     default:
-        //         $query->orderByDesc('created_at');
-        //         break;
-        // }
 
         $threads = $query->simplePaginate($perPage);
 

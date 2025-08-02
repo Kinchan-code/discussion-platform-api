@@ -22,18 +22,9 @@ class ThreadDTO
 
     public static function fromModel($thread): self
     {
-        // Handle both JOIN result format and relationship format
-        // This supports both the new JOIN approach and the previous relationship approach
+        // REVERTED TO PREVIOUS APPROACH - Handle relationship format (JOIN approach caused issues)
         $protocol = null;
-        if (isset($thread->protocol_title)) {
-            // NEW APPROACH: JOIN query result - build protocol array directly from flattened data
-            $protocol = [
-                'id' => $thread->protocol_id_data,
-                'title' => $thread->protocol_title,
-                'author' => $thread->protocol_author,
-            ];
-        } elseif ($thread->protocol) {
-            // PREVIOUS APPROACH: Relationship result - use existing method (fallback)
+        if ($thread->protocol) {
             $protocol = self::createProtocolData($thread->protocol);
         }
 
@@ -56,30 +47,22 @@ class ThreadDTO
 
     /**
      * Create protocol data - minimal for listings, full for individual views
-     * COMMENTED OUT - PREVIOUS APPROACH (can be reverted if JOIN approach fails)
+     * REVERTED TO PREVIOUS APPROACH (JOIN approach caused pagination issues)
      */
     private static function createProtocolData($protocol): array
     {
         // PREVIOUS APPROACH: Check if this is a full protocol (has content) or minimal (just id, title, author)
-        // if (isset($protocol->content)) {
-        //     // Full protocol data for individual thread view
-        //     return ProtocolDTO::fromModel($protocol)->toArray();
-        // } else {
-        //     // Minimal protocol data for thread listings
-        //     return [
-        //         'id' => $protocol->id,
-        //         'title' => $protocol->title,
-        //         'author' => $protocol->author,
-        //     ];
-        // }
-
-        // NEW APPROACH: Since we're using JOIN, this method is mainly for fallback
-        // Simple protocol data extraction
-        return [
-            'id' => $protocol->id,
-            'title' => $protocol->title,
-            'author' => $protocol->author,
-        ];
+        if (isset($protocol->content)) {
+            // Full protocol data for individual thread view
+            return ProtocolDTO::fromModel($protocol)->toArray();
+        } else {
+            // Minimal protocol data for thread listings
+            return [
+                'id' => $protocol->id,
+                'title' => $protocol->title,
+                'author' => $protocol->author,
+            ];
+        }
     }
 
     public function toArray(): array
