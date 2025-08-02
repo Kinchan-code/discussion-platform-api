@@ -39,54 +39,52 @@ class ThreadService
      * @param array $params
      * @return LengthAwarePaginator
      */
-    public function listThreads($params): Paginator
+    public function listThreads($params): LengthAwarePaginator
     {
         $perPage = $params['per_page'] ?? 15;
         $sort = $params['sort'] ?? 'recent';
         $protocolId = $params['protocol_id'] ?? null;
         $author = $params['author'] ?? null;
 
-        // REVERTED TO PREVIOUS APPROACH - JOIN approach caused pagination issues and no performance improvement
-        $query = Thread::with([
-            'protocol' => function ($query) {
-                $query->select('id', 'title', 'author'); // Minimal protocol data for performance
-            }
+        // OPTIMIZED FOR UI REQUIREMENTS - Only get what's needed: protocol ID, protocol name, vote score, comments count
+        $query = Thread::select([
+            'threads.*',
+            'protocols.id as protocol_id_data',
+            'protocols.title as protocol_title'
         ])
-            ->withCount(['comments']) // Keep comments count as needed
+            ->leftJoin('protocols', 'threads.protocol_id', '=', 'protocols.id')
+            ->withCount(['comments'])
             ->withCount([
-                'votes as upvotes' => function ($q) {
-                    $q->where('type', 'upvote');
-                },
-                'votes as downvotes' => function ($q) {
-                    $q->where('type', 'downvote');
-                },
+                'votes as vote_score' => function ($q) {
+                    $q->selectRaw('SUM(CASE WHEN type = "upvote" THEN 1 WHEN type = "downvote" THEN -1 ELSE 0 END)');
+                }
             ]);
 
         if ($author) {
-            $query->where('author', $author);
+            $query->where('threads.author', $author);
         }
 
         if ($protocolId) {
-            $query->where('protocol_id', $protocolId);
+            $query->where('threads.protocol_id', $protocolId);
         }
 
         switch ($sort) {
             case 'popular':
-                $query->orderByDesc('upvotes')
+                $query->orderByDesc('vote_score')
                     ->orderByDesc('comments_count')
-                    ->orderByDesc('created_at');
+                    ->orderByDesc('threads.created_at');
                 break;
             case 'rating':
-                $query->orderByDesc('upvotes')
-                    ->orderByDesc('created_at');
+                $query->orderByDesc('vote_score')
+                    ->orderByDesc('threads.created_at');
                 break;
             case 'recent':
             default:
-                $query->orderByDesc('created_at');
+                $query->orderByDesc('threads.created_at');
                 break;
         }
 
-        $threads = $query->simplePaginate($perPage);
+        $threads = $query->paginate($perPage);
 
         return $threads;
     }

@@ -22,11 +22,17 @@ class ThreadDTO
 
     public static function fromModel($thread): self
     {
-        // REVERTED TO PREVIOUS APPROACH - Handle relationship format (JOIN approach caused issues)
+        // OPTIMIZED FOR UI REQUIREMENTS - Protocol ID, protocol name, vote score, comments count
         $protocol = null;
-        if ($thread->protocol) {
-            $protocol = self::createProtocolData($thread->protocol);
+        if (isset($thread->protocol_title)) {
+            $protocol = [
+                'id' => $thread->protocol_id_data ?? $thread->protocol_id,
+                'title' => $thread->protocol_title,
+                'author' => null, // Not needed for UI
+            ];
         }
+
+        $voteScore = $thread->vote_score ?? 0;
 
         return new self(
             id: $thread->id,
@@ -34,10 +40,10 @@ class ThreadDTO
             title: $thread->title,
             body: $thread->body,
             author: $thread->author,
-            votes_count: ($thread->upvotes ?? 0) + ($thread->downvotes ?? 0),
-            upvotes: $thread->upvotes ?? 0,
-            downvotes: $thread->downvotes ?? 0,
-            vote_score: ($thread->upvotes ?? 0) - ($thread->downvotes ?? 0),
+            votes_count: abs($voteScore), // Total engagement
+            upvotes: max($voteScore, 0), // Positive score as upvotes
+            downvotes: abs(min($voteScore, 0)), // Negative score as downvotes
+            vote_score: $voteScore,
             comments_count: $thread->comments_count ?? 0,
             created_at: $thread->created_at?->toISOString() ?? '',
             updated_at: $thread->updated_at?->toISOString() ?? '',
