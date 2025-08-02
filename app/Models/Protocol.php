@@ -72,6 +72,8 @@ class Protocol extends Model
             'tags' => is_array($this->tags) ? implode(' ', $this->tags) : (string) $this->tags,
             'author' => $this->author,
             'rating' => (float) $this->rating,
+            'reviews_count' => $this->reviews_count ?? $this->reviews()->count(),
+            'threads_count' => $this->threads_count ?? $this->threads()->count(),
             'created_at' => $this->created_at?->timestamp ?? time(),
         ];
     }

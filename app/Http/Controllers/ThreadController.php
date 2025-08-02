@@ -24,7 +24,7 @@ use Illuminate\Support\Facades\Auth;
  * - Protocol-based thread organization and filtering
  * - Author-based filtering and search capabilities
  * - Thread statistics and engagement metrics
- * - Optimized pagination with protocol tag transformation
+ * - Optimized pagination for performance
  *
  * @package App\Http\Controllers
  * @author Christian Bangay
@@ -45,34 +45,6 @@ class ThreadController extends Controller
         $this->threadService = $threadService;
     }
 
-    private function transformProtocolTags($threads)
-    {
-        if ($threads instanceof \Illuminate\Pagination\LengthAwarePaginator) {
-            $threads->getCollection()->transform(function ($thread) {
-                if ($thread->protocol && $thread->protocol->tags) {
-                    $thread->protocol->tags = collect($thread->protocol->tags)->map(function ($tag, $index) {
-                        return [
-                            'id' => $index + 1,
-                            'tag' => $tag
-                        ];
-                    })->toArray();
-                }
-                return $thread;
-            });
-        } else {
-            // Handle single thread
-            if ($threads->protocol && $threads->protocol->tags) {
-                $threads->protocol->tags = collect($threads->protocol->tags)->map(function ($tag, $index) {
-                    return [
-                        'id' => $index + 1,
-                        'tag' => $tag
-                    ];
-                })->toArray();
-            }
-        }
-
-        return $threads;
-    }
     /**
      * Retrieve a paginated list of all discussion threads.
      *
@@ -176,14 +148,16 @@ class ThreadController extends Controller
                 'per_page' => $perPage
             ]);
 
-            $threadDTOs = $threads->getCollection()->map(function ($thread) {
-                return ThreadDTO::fromModel($thread);
-            });
+            // Transform threads to DTOs efficiently
+            $threadDTOs = [];
+            foreach ($threads->items() as $thread) {
+                $threadDTOs[] = ThreadDTO::fromModel($thread)->toArray();
+            }
 
             $paginationDTO = PaginationDTO::fromPaginator($threads);
 
             return ApiResponse::successWithPagination(
-                data: $threadDTOs->toArray(),
+                data: $threadDTOs,
                 pagination: $paginationDTO->toArray(),
                 message: 'Threads fetched successfully.'
             )->toJsonResponse();

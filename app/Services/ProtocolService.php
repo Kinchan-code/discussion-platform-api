@@ -113,17 +113,9 @@ class ProtocolService
             'author' => optional($user)->name ?? 'Anonymous',
         ]);
 
-        // Force reload to ensure we have all attributes
-        $protocol->refresh();
-
-        // Reorder attributes for response
-        $protocol->setRawAttributes(array_merge([
-            'id' => $protocol->id,
-            'title' => $protocol->title,
-            'content' => $protocol->content,
-            'tags' => $protocol->tags,
-            'author' => $protocol->author,
-        ], $protocol->getAttributes()));
+        // Load count relationships for search indexing
+        $protocol->load(['reviews', 'threads']);
+        $protocol->loadCount(['reviews', 'threads']);
 
         return $protocol;
     }

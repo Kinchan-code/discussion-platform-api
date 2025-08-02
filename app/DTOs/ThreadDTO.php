@@ -17,26 +17,69 @@ class ThreadDTO
         public readonly ?int $comments_count = null,
         public readonly string $created_at,
         public readonly string $updated_at,
-        public readonly ?ProtocolDTO $protocol = null,
+        public readonly ?array $protocol = null,
     ) {}
 
     public static function fromModel($thread): self
     {
+        // Handle both JOIN result format and relationship format
+        // This supports both the new JOIN approach and the previous relationship approach
+        $protocol = null;
+        if (isset($thread->protocol_title)) {
+            // NEW APPROACH: JOIN query result - build protocol array directly from flattened data
+            $protocol = [
+                'id' => $thread->protocol_id_data,
+                'title' => $thread->protocol_title,
+                'author' => $thread->protocol_author,
+            ];
+        } elseif ($thread->protocol) {
+            // PREVIOUS APPROACH: Relationship result - use existing method (fallback)
+            $protocol = self::createProtocolData($thread->protocol);
+        }
+
         return new self(
             id: $thread->id,
             protocol_id: $thread->protocol_id,
             title: $thread->title,
             body: $thread->body,
             author: $thread->author,
-            votes_count: $thread->votes_count ?? 0,
+            votes_count: ($thread->upvotes ?? 0) + ($thread->downvotes ?? 0),
             upvotes: $thread->upvotes ?? 0,
             downvotes: $thread->downvotes ?? 0,
             vote_score: ($thread->upvotes ?? 0) - ($thread->downvotes ?? 0),
             comments_count: $thread->comments_count ?? 0,
             created_at: $thread->created_at?->toISOString() ?? '',
             updated_at: $thread->updated_at?->toISOString() ?? '',
-            protocol: $thread->protocol ? ProtocolDTO::fromModel($thread->protocol) : null,
+            protocol: $protocol,
         );
+    }
+
+    /**
+     * Create protocol data - minimal for listings, full for individual views
+     * COMMENTED OUT - PREVIOUS APPROACH (can be reverted if JOIN approach fails)
+     */
+    private static function createProtocolData($protocol): array
+    {
+        // PREVIOUS APPROACH: Check if this is a full protocol (has content) or minimal (just id, title, author)
+        // if (isset($protocol->content)) {
+        //     // Full protocol data for individual thread view
+        //     return ProtocolDTO::fromModel($protocol)->toArray();
+        // } else {
+        //     // Minimal protocol data for thread listings
+        //     return [
+        //         'id' => $protocol->id,
+        //         'title' => $protocol->title,
+        //         'author' => $protocol->author,
+        //     ];
+        // }
+
+        // NEW APPROACH: Since we're using JOIN, this method is mainly for fallback
+        // Simple protocol data extraction
+        return [
+            'id' => $protocol->id,
+            'title' => $protocol->title,
+            'author' => $protocol->author,
+        ];
     }
 
     public function toArray(): array
@@ -54,7 +97,7 @@ class ThreadDTO
             'comments_count' => $this->comments_count,
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
-            'protocol' => $this->protocol?->toArray(),
+            'protocol' => $this->protocol,
         ];
     }
 }
