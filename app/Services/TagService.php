@@ -5,7 +5,7 @@ namespace App\Services;
 use App\DTOs\TagDTO;
 use App\Models\Protocol;
 use App\Models\Thread;
-use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Tag Management Service
@@ -66,15 +66,33 @@ class TagService
      */
     public function reindexSearchModels(): array
     {
-        Artisan::call('scout:flush', ['model' => 'App\Models\Protocol']);
-        Artisan::call('scout:flush', ['model' => 'App\Models\Thread']);
+        Log::info('Starting search reindex process...');
 
-        Artisan::call('scout:import', ['model' => 'App\Models\Protocol']);
-        Artisan::call('scout:import', ['model' => 'App\Models\Thread']);
+        // Remove all existing records from search index
+        Log::info('Removing all Protocol records from search index...');
+        Protocol::removeAllFromSearch();
+
+        Log::info('Removing all Thread records from search index...');
+        Thread::removeAllFromSearch();
+
+        // Give search engine time to process deletions
+        sleep(2);
+
+        // Re-add all current records to search index
+        Log::info('Adding all Protocol records to search index...');
+        Protocol::makeAllSearchable();
+
+        Log::info('Adding all Thread records to search index...');
+        Thread::makeAllSearchable();
+
+        $protocolCount = Protocol::count();
+        $threadCount = Thread::count();
+
+        Log::info("Reindexing complete: {$protocolCount} protocols, {$threadCount} threads");
 
         return [
-            'protocols_indexed' => Protocol::count(),
-            'threads_indexed' => Thread::count(),
+            'protocols_indexed' => $protocolCount,
+            'threads_indexed' => $threadCount,
             'timestamp' => now()->toISOString(),
         ];
     }

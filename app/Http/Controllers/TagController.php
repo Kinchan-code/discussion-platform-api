@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Services\TagService;
 use App\DTOs\ApiResponse;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 /**
  * Tag Management Controller
@@ -63,13 +64,23 @@ class TagController extends Controller
 
     /**
      * Reindex all searchable models to Typesense.
+     * Restricted to admin users only for security.
      *
+     * @param \Illuminate\Http\Request $request
      * @return \Illuminate\Http\JsonResponse
      * @throws \Exception When rebuilding search index fails
      */
-    public function reindex(): JsonResponse
+    public function reindex(Request $request): JsonResponse
     {
         try {
+            // Check if user is admin
+            if (!$request->user() || !$request->user()->is_admin) {
+                return ApiResponse::error(
+                    message: 'Access denied. Only administrators can reindex search data.',
+                    statusCode: 403
+                )->toJsonResponse();
+            }
+
             $result = $this->tagService->reindexSearchModels();
 
             return ApiResponse::success(

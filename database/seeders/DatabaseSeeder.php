@@ -38,8 +38,16 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        // Create admin user first
+        $adminUser = User::create([
+            'name' => 'Admin',
+            'email' => 'admin@discussionplatform.com',
+            'email_verified_at' => now(),
+            'password' => bcrypt('4dm!N'), // Change this in production!
+            'is_admin' => true,
+        ]);
 
-        // Create users first
+        // Create regular users
         $usersData = User::factory()->count(5)->make()->map(function ($user) {
             return [
                 'name' => $user->name,
@@ -47,6 +55,7 @@ class DatabaseSeeder extends Seeder
                 'email_verified_at' => $user->email_verified_at ? $user->email_verified_at->format('Y-m-d H:i:s') : null,
                 'password' => $user->password,
                 'remember_token' => $user->remember_token,
+                'is_admin' => false, // Regular users are not admin
                 'created_at' => now(),
                 'updated_at' => now(),
             ];
