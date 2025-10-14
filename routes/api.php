@@ -12,6 +12,10 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\StatsController;
 use App\Http\Controllers\TagController;
+use App\Http\Controllers\ChatRoomController;
+use App\Http\Controllers\ChatMessageController;
+use App\Http\Controllers\MessageReactionController;
+use App\Http\Controllers\UserController;
 
 // API Documentation
 Route::get('/', function () {
@@ -24,7 +28,8 @@ Route::get('/', function () {
             'auth' => [
                 'POST /register' => 'Register new user',
                 'POST /login' => 'Login user',
-                'POST /logout' => 'Logout user [AUTH]'
+                'POST /logout' => 'Logout user [AUTH]',
+                'POST /broadcasting/auth' => 'Get broadcasting authentication token [AUTH]'
             ],
             'profile' => [
                 'GET /profile' => 'Get current user profile [AUTH]',
@@ -81,6 +86,30 @@ Route::get('/', function () {
             'tags' => [
                 'GET /tags/popular' => 'Popular tags',
                 'POST /tags/reindex' => 'Rebuild search index [AUTH]'
+            ],
+            'chat-rooms' => [
+                'GET /chat-rooms' => 'Get user chat rooms (?per_page=15&search=name&type=all|private|group) [AUTH]',
+                'POST /chat-rooms' => 'Create new chat room [AUTH]',
+                'GET /chat-rooms/{id}' => 'Get chat room details [AUTH]',
+                'POST /chat-rooms/{id}/users' => 'Add users to chat room [AUTH]',
+                'POST /chat-rooms/{chatRoomId}/messages' => 'Send message to chat room [AUTH]',
+                'GET /chat-rooms/{chatRoomId}/messages' => 'Get chat room messages (?per_page=50) [AUTH]',
+                'POST /chat-rooms/{chatRoomId}/leave' => 'Record user exit from chat room [AUTH]',
+                'PUT /messages/{messageId}' => 'Edit message [AUTH]',
+                'DELETE /messages/{messageId}' => 'Delete message [AUTH]'
+            ],
+            'users' => [
+                'GET /users/available' => 'Get available users for conversations (?per_page=20&search=name) [AUTH]',
+                'GET /users/suggestions' => 'Get user suggestions for conversations (?limit=10) [AUTH]',
+                'GET /users/search' => 'Search users by name or email (?q=search_term&limit=20) [AUTH]',
+                'GET /users/group-chat' => 'Get all users for group chat creation (?per_page=20&search=name&sort_by=name&sort_order=asc) [AUTH]'
+            ],
+            'user-status' => [
+                'POST /users/status' => 'Set current user status (online, offline, away, busy) [AUTH]',
+                'GET /users/status' => 'Get current user status [AUTH]',
+                'GET /users/{userId}/status' => 'Check specific user online status [AUTH]',
+                'GET /users/online' => 'Get all online users [AUTH]',
+                'GET /chat-rooms/{chatRoomId}/users/online' => 'Get online users for specific chat room [AUTH]'
             ]
         ],
         'sample_requests' => [
@@ -100,6 +129,11 @@ Route::get('/', function () {
                         'email' => 'john@example.com',
                         'password' => 'password123'
                     ]
+                ],
+                'broadcasting_auth' => [
+                    'url' => 'POST /api/broadcasting/auth',
+                    'headers' => ['Authorization' => 'Bearer {token}'],
+                    'description' => 'Get authentication token for WebSocket broadcasting'
                 ]
             ],
             'profile' => [
@@ -229,6 +263,77 @@ Route::get('/', function () {
                         'type' => 'upvote'
                     ]
                 ]
+            ],
+            'chat-rooms' => [
+                'create' => [
+                    'url' => 'POST /api/chat-rooms',
+                    'headers' => ['Authorization' => 'Bearer {token}'],
+                    'body' => [
+                        'name' => 'Trading Discussion Group',
+                        'description' => 'A group for discussing trading strategies and protocols',
+                        'type' => 'private',
+                        'user_ids' => [2, 3, 4]
+                    ]
+                ],
+                'add_users' => [
+                    'url' => 'POST /api/chat-rooms/{id}/users',
+                    'headers' => ['Authorization' => 'Bearer {token}'],
+                    'body' => [
+                        'user_ids' => [5, 6]
+                    ]
+                ]
+            ],
+            'users' => [
+                'available_users' => [
+                    'url' => 'GET /api/users/available?per_page=20&search=alice',
+                    'headers' => ['Authorization' => 'Bearer {token}'],
+                    'description' => 'Get paginated list of users available for conversations, excluding current user'
+                ],
+                'user_suggestions' => [
+                    'url' => 'GET /api/users/suggestions?limit=10',
+                    'headers' => ['Authorization' => 'Bearer {token}'],
+                    'description' => 'Get suggested users for starting conversations'
+                ],
+                'search_users' => [
+                    'url' => 'GET /api/users/search?q=john&limit=20',
+                    'headers' => ['Authorization' => 'Bearer {token}'],
+                    'description' => 'Search users by name or email'
+                ]
+            ],
+            'user-status' => [
+                'set_status' => [
+                    'url' => 'POST /api/users/status',
+                    'headers' => ['Authorization' => 'Bearer {token}'],
+                    'body' => [
+                        'status' => 'online'
+                    ],
+                    'description' => 'Set user status (online, offline, away, busy)'
+                ],
+                'get_current_status' => [
+                    'url' => 'GET /api/users/status',
+                    'headers' => ['Authorization' => 'Bearer {token}'],
+                    'description' => 'Get current user status'
+                ],
+                'check_user_status' => [
+                    'url' => 'GET /api/users/123/status',
+                    'headers' => ['Authorization' => 'Bearer {token}'],
+                    'description' => 'Check specific user online status'
+                ],
+                'get_online_users' => [
+                    'url' => 'GET /api/users/online',
+                    'headers' => ['Authorization' => 'Bearer {token}'],
+                    'description' => 'Get all online users'
+                ],
+                'get_chat_room_online_users' => [
+                    'url' => 'GET /api/chat-rooms/1/users/online',
+                    'headers' => ['Authorization' => 'Bearer {token}'],
+                    'description' => 'Get online users for specific chat room'
+                ],
+                'leave_chat_room' => [
+                    'url' => 'POST /api/chat-rooms/1/leave',
+                    'headers' => ['Authorization' => 'Bearer {token}'],
+                    'description' => 'Record user exit from chat room'
+                ]
             ]
         ],
         'features' => [
@@ -238,7 +343,10 @@ Route::get('/', function () {
             'smart_highlighting' => 'Highlighted comments/replies automatically included even if on different pages',
             'deep_linking' => 'Use ?highlight_comment=id or ?highlight_reply=id for smart highlighting',
             'service_architecture' => 'Clean separation with ProfileService handling business logic',
-            'profile_content' => 'Get user comments and replies separately with /profile/comments and /profile/replies'
+            'profile_content' => 'Get user comments and replies separately with /profile/comments and /profile/replies',
+            'realtime_chat' => 'WebSocket-based real-time messaging with typing indicators and online status',
+            'online_status' => 'Real-time online/offline indicators with automatic activity tracking',
+            'user_presence' => 'Track user activity and broadcast status changes to relevant chat rooms'
         ]
     ]);
 });
@@ -246,6 +354,18 @@ Route::get('/', function () {
 // Authentication Routes
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
+
+// Broadcasting Authentication Route for Sanctum
+Route::middleware('auth:sanctum')->post('/broadcasting/auth', function (Illuminate\Http\Request $request) {
+    $user = $request->user();
+    
+    // Create a temporary token for broadcasting
+    $token = $user->createToken('broadcasting', ['broadcasting'])->plainTextToken;
+    
+    return response()->json([
+        'auth' => $token
+    ]);
+});
 
 // Tag Routes (public)
 Route::get('/tags/popular', [TagController::class, 'popularTags']);
@@ -284,6 +404,44 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/threads/{thread}/vote', [VoteController::class, 'voteOnThread']);
     Route::post('/comments/{comment}/vote', [VoteController::class, 'voteOnComment']);
     Route::post('/reviews/{review}/vote', [VoteController::class, 'voteOnReview']);
+
+    // Chat Room Routes
+    Route::get('/chat-rooms', [ChatRoomController::class, 'getUserChatRooms']);
+    Route::post('/chat-rooms', [ChatRoomController::class, 'createChatRoom']);
+    Route::get('/chat-rooms/{id}', [ChatRoomController::class, 'getChatRoomDetails']);
+    Route::post('/chat-rooms/{id}/users', [ChatRoomController::class, 'addUsers']);
+
+    // Chat Message Routes
+    Route::post('/chat-rooms/{chatRoomId}/messages', [ChatMessageController::class, 'sendMessage']);
+    Route::get('/chat-rooms/{chatRoomId}/messages', [ChatMessageController::class, 'getMessages']);
+    Route::get('/messages/{messageId}/replies', [ChatMessageController::class, 'getMessageReplies']);
+    Route::put('/messages/{messageId}', [ChatMessageController::class, 'editMessage']);
+    Route::delete('/messages/{messageId}', [ChatMessageController::class, 'deleteMessage']);
+
+    // Typing Indicator Routes
+    Route::post('/chat-rooms/{chatRoomId}/typing', [ChatMessageController::class, 'startTyping']);
+    Route::delete('/chat-rooms/{chatRoomId}/typing', [ChatMessageController::class, 'stopTyping']);
+
+    // Chat Room Visit Tracking Routes
+    Route::post('/chat-rooms/{chatRoomId}/leave', [ChatMessageController::class, 'leaveChatRoom']);
+
+    // Message Reaction Routes
+    Route::post('/messages/{messageId}/reactions', [MessageReactionController::class, 'addReaction']);
+    Route::delete('/messages/{messageId}/reactions', [MessageReactionController::class, 'removeReaction']);
+    Route::get('/messages/{messageId}/reactions', [MessageReactionController::class, 'getReactions']);
+
+    // User Routes
+    Route::get('/users/available', [UserController::class, 'getAvailableUsers']);
+    Route::get('/users/suggestions', [UserController::class, 'getUserSuggestions']);
+    Route::get('/users/search', [UserController::class, 'searchUsers']);
+    Route::get('/users/group-chat', [UserController::class, 'getAllUsersForGroupChat']);
+    
+    // User Status Routes
+    Route::post('/users/status', [UserController::class, 'setStatus']);
+    Route::get('/users/status', [UserController::class, 'getCurrentUserStatus']);
+    Route::get('/users/{userId}/status', [UserController::class, 'checkUserOnlineStatus']);
+    Route::get('/users/online', [UserController::class, 'getAllOnlineUsers']);
+    Route::get('/chat-rooms/{chatRoomId}/users/online', [UserController::class, 'getOnlineUsersForChatRoom']);
 });
 
 // Public Routes (read-only, no authentication required)
