@@ -4,10 +4,13 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use App\Models\User;
 use App\Models\Protocol;
+use App\Models\Tag;
 use App\Models\Thread;
 use App\Models\Comment;
+use App\Models\Reply;
 use App\Models\Review;
 use App\Models\Vote;
 
@@ -38,10 +41,21 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        // Create admin user first (if it doesn't exist)
+        $adminUser = User::firstOrCreate(
+            ['email' => 'admin@discussionplatform.com'],
+            [
+                'name' => 'Admin',
+                'email_verified_at' => now(),
+                'password' => bcrypt('4dm!N'), // Change this in production!
+                'is_admin' => true,
+            ]
+        );
 
-        // Create users first
+        // Create regular users
         $usersData = User::factory()->count(5)->make()->map(function ($user) {
             return [
+                'id' => (string) Str::uuid(),
                 'name' => $user->name,
                 'email' => $user->email,
                 'email_verified_at' => $user->email_verified_at ? $user->email_verified_at->format('Y-m-d H:i:s') : null,
@@ -134,7 +148,44 @@ class DatabaseSeeder extends Seeder
         $createdProtocols = [];
         try {
             foreach ($protocols as $protocolData) {
+                // Extract tags before creating protocol
+                $tags = $protocolData['tags'] ?? [];
+                unset($protocolData['tags']);
+
+                // Create protocol without tags
                 $protocol = Protocol::create($protocolData);
+
+                // Attach tags with UUID generation for pivot table
+                if (!empty($tags)) {
+                    $tagIds = collect($tags)->map(function ($tagName) {
+                        return Tag::firstOrCreate(['tag' => $tagName])->id;
+                    })->toArray();
+                    
+                    // Insert pivot records directly with UUIDs
+                    $pivotData = [];
+                    foreach ($tagIds as $tagId) {
+                        // Check if the relationship already exists
+                        $exists = DB::table('protocol_tag')
+                            ->where('protocol_id', $protocol->id)
+                            ->where('tag_id', $tagId)
+                            ->exists();
+                        
+                        if (!$exists) {
+                            $pivotData[] = [
+                                'id' => (string) Str::uuid(),
+                                'protocol_id' => $protocol->id,
+                                'tag_id' => $tagId,
+                                'created_at' => now(),
+                                'updated_at' => now(),
+                            ];
+                        }
+                    }
+                    
+                    if (!empty($pivotData)) {
+                        DB::table('protocol_tag')->insert($pivotData);
+                    }
+                }
+
                 $createdProtocols[] = $protocol;
             }
             DB::commit();
@@ -176,6 +227,7 @@ class DatabaseSeeder extends Seeder
             $threadData = [];
             for ($i = 0; $i < $threadCount; $i++) {
                 $threadData[] = [
+                    'id' => (string) Str::uuid(),
                     'protocol_id' => $protocol->getKey(),
                     'title' => $threadTitles[array_rand($threadTitles)],
                     'body' => $threadBodies[array_rand($threadBodies)],
@@ -211,8 +263,8 @@ class DatabaseSeeder extends Seeder
             $commentData = [];
             for ($i = 0; $i < $commentCount; $i++) {
                 $commentData[] = [
+                    'id' => (string) Str::uuid(),
                     'thread_id' => $thread->getKey(),
-                    'parent_id' => null,
                     'body' => $commentBodies[array_rand($commentBodies)],
                     'author' => $users->random()->name,
                     'created_at' => now(),
@@ -225,11 +277,10 @@ class DatabaseSeeder extends Seeder
                 $allComments = array_merge($allComments, $threadComments);
             }
 
-            // Create 1-3 replies for some comments
+            // Create 1-3 replies for some comments using Reply model
             foreach ($threadComments as $comment) {
                 if (rand(0, 1)) {
                     $replyCount = rand(1, 3);
-                    $replyData = [];
                     $replyBodies = [
                         'Thanks for sharing your experience!',
                         'I agree with your point.',
@@ -243,18 +294,13 @@ class DatabaseSeeder extends Seeder
                         'Great advice!',
                     ];
                     for ($j = 0; $j < $replyCount; $j++) {
-                        $replyData[] = [
-                            'thread_id' => $thread->getKey(),
-                            'parent_id' => $comment->getKey(),
+                        Reply::create([
+                            'comment_id' => $comment->getKey(),
+                            'parent_id' => null,
+                            'reply_to_id' => null,
                             'body' => $replyBodies[array_rand($replyBodies)],
                             'author' => $users->random()->name,
-                            'created_at' => now(),
-                            'updated_at' => now(),
-                        ];
-                    }
-                    if (!empty($replyData)) {
-                        Comment::insert($replyData);
-                        $allComments = array_merge($allComments, Comment::where('thread_id', $thread->getKey())->get()->all());
+                        ]);
                     }
                 }
             }
@@ -264,6 +310,7 @@ class DatabaseSeeder extends Seeder
             $threadVoters = $users->random(min(3, $users->count()));
             foreach ($threadVoters as $user) {
                 $threadVoteData[] = [
+                    'id' => (string) Str::uuid(),
                     'user_id' => $user->id,
                     'votable_type' => Thread::class,
                     'votable_id' => $thread->getKey(),
@@ -282,6 +329,7 @@ class DatabaseSeeder extends Seeder
                 $commentVoters = $users->random(min(2, $users->count()));
                 foreach ($commentVoters as $user) {
                     $commentVoteData[] = [
+                        'id' => (string) Str::uuid(),
                         'user_id' => $user->id,
                         'votable_type' => Comment::class,
                         'votable_id' => $comment->getKey(),
@@ -317,6 +365,7 @@ class DatabaseSeeder extends Seeder
                 $reviewData = [];
                 for ($i = 0; $i < $reviewCount; $i++) {
                     $reviewData[] = [
+                        'id' => (string) Str::uuid(),
                         'protocol_id' => $protocol->getKey(),
                         'rating' => rand(3, 5),
                         'feedback' => $reviewFeedbacks[array_rand($reviewFeedbacks)],

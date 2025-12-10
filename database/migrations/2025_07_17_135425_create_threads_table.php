@@ -12,11 +12,16 @@ return new class extends Migration
     public function up()
     {
         Schema::create('threads', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('protocol_id')->constrained()->onDelete('cascade');
+            $table->uuid('id')->primary();
+            $table->foreignUuid('protocol_id')->constrained()->onDelete('cascade');
             $table->string('title');
             $table->text('body');
+            $table->string('author');
             $table->timestamps();
+
+            $table->index('protocol_id', 'idx_threads_protocol');
+            $table->index('author', 'idx_threads_author');
+            $table->index('created_at', 'idx_threads_created_at');
         });
     }
     

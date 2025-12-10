@@ -3,25 +3,27 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 /**
- * @property int $id
- * @property int $protocol_id
+ * @property string $id
+ * @property string $protocol_id
  * @property int $rating
  * @property string|null $feedback
  * @property string $author
  * @property \Carbon\Carbon $created_at
  * @property \Carbon\Carbon $updated_at
  * @property-read \App\Models\Protocol $protocol
- * @property-read int $helpful_count
- * @property-read int $not_helpful_count
  */
 class Review extends Model
 {
-    use HasFactory;
+    use HasFactory, HasUuids;
+
+    public $incrementing = false;
+    protected $keyType = 'string';
 
     /**
      * The attributes that are mass assignable.
@@ -68,28 +70,6 @@ class Review extends Model
     public function votes(): MorphMany
     {
         return $this->morphMany(Vote::class, 'votable');
-    }
-
-
-    /**
-     * Accessor for the helpful count for the review.
-     *
-     * @return int
-     */
-    public function getHelpfulCountAttribute(): int
-    {
-        return $this->votes()->where('type', 'upvote')->count();
-    }
-
-
-    /**
-     * Accessor for the not helpful count for the review.
-     *
-     * @return int
-     */
-    public function getNotHelpfulCountAttribute(): int
-    {
-        return $this->votes()->where('type', 'downvote')->count();
     }
 
     /**

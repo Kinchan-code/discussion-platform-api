@@ -3,10 +3,14 @@
 namespace App\Services;
 
 use App\Models\User;
-use App\DTOs\UserDTO;
-use App\DTOs\AuthResponseDTO;
+use App\Http\Requests\RegisterRequest;
+use App\Http\Requests\LoginRequest;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+use Throwable;
 
 /**
  * Authentication Service
@@ -26,72 +30,149 @@ use Illuminate\Support\Facades\Hash;
  * @since 2025-07-31
  *
  * @see App\Models\User
- * @see App\DTOs\UserDTO
- * @see App\DTOs\AuthResponseDTO
+ * @see App\Http\Resources\UserResource
+ * @see App\Http\Resources\AuthResponseResource
  */
 class AuthService
 {
     /**
      * Register a new user.
      *
-     * @param array $data
-     * @return UserDTO
+     * @param RegisterRequest $request
+     * @return User
+     * @throws ValidationException
      */
-    public function register(array $data): UserDTO
+    public function register(RegisterRequest $request): User
     {
-        $user = User::create([
-            'name' => $data['name'],
-            'email' => $data['email'],
-            'password' => Hash::make($data['password']),
-            'email_verified_at' => now(), // Auto-verify for traditional registration
-        ]);
+        try {
+            return DB::transaction(function () use ($request) {
+                $data = $request->validated();
 
-        return UserDTO::fromModel($user);
+                return User::create([
+                    'name' => $data['name'],
+                    'email' => $data['email'],
+                    'password' => Hash::make($data['password']),
+                    'email_verified_at' => now(),
+                ]);
+            });
+        } catch (ValidationException $e) {
+            throw $e;
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t register the user due to a server error. Please try again.';
+
+            throw ValidationException::withMessages([
+                'registration' => [$message],
+            ]);
+        }
     }
 
     /**
-     * Login a user and return authentication response.
+     * Login a user and return user with token.
      *
-     * @param array $credentials
-     * @return AuthResponseDTO
-     * @throws \Exception When credentials are invalid
+     * @param LoginRequest $request
+     * @return array
+     * @throws ValidationException
      */
-    public function login(array $credentials): AuthResponseDTO
+    public function login(LoginRequest $request): array
     {
-        if (!Auth::attempt($credentials)) {
-            throw new \Exception('Invalid credentials.');
+        try {
+            $credentials = $request->validated();
+
+            if (!Auth::attempt($credentials)) {
+                throw ValidationException::withMessages([
+                    'email' => ['The provided credentials are incorrect.'],
+                ]);
+            }
+
+            $user = User::where('email', $credentials['email'])->firstOrFail();
+            $token = $user->createToken('auth-token')->plainTextToken;
+
+            return [
+                'user' => $user,
+                'token' => $token,
+                'token_type' => 'Bearer',
+            ];
+        } catch (ValidationException $e) {
+            throw $e;
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t log you in due to a server error. Please try again.';
+
+            throw ValidationException::withMessages([
+                'login' => [$message],
+            ]);
         }
-
-        $user = User::where('email', $credentials['email'])->firstOrFail();
-        $token = $user->createToken('auth-token')->plainTextToken;
-
-        return AuthResponseDTO::fromUserAndToken($user, $token);
     }
 
     /**
      * Logout the current user.
      *
-     * @param User $user
+     * @param Request $request
      * @return void
+     * @throws ValidationException
      */
-    public function logout(User $user): void
+    public function logout(Request $request): void
     {
-        /** @var \Laravel\Sanctum\PersonalAccessToken|null $token */
-        $token = $user->currentAccessToken();
+        try {
+            $user = $request->user();
 
-        if ($token) {
-            $token->delete();
+            if (!$user) {
+                throw new \Exception('User not authenticated.');
+            }
+
+            /** @var \Laravel\Sanctum\PersonalAccessToken|null $token */
+            $token = $user->currentAccessToken();
+
+            if ($token) {
+                $token->delete();
+            }
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t log you out due to a server error. Please try again.';
+
+            throw ValidationException::withMessages([
+                'logout' => [$message],
+            ]);
         }
     }
 
     /**
      * Get the current authenticated user.
      *
-     * @param User $user
-     * @return UserDTO
+     * @param Request $request
+     * @return User
+     * @throws ValidationException
      */
-    public function getCurrentUser(User $user): UserDTO
+    public function me(Request $request): User
     {
-        return UserDTO::fromModel($user);
+        try {
+            $user = $request->user();
+
+            if (!$user) {
+                throw new \Exception('User not authenticated.');
+            }
+
+            return $user;
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t load the user profile due to a server error. Please try again.';
+
+            throw ValidationException::withMessages([
+                'user' => [$message],
+            ]);
+        }
     }
 }

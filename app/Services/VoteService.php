@@ -2,217 +2,108 @@
 
 namespace App\Services;
 
+use App\Models\Vote;
 use App\Models\Thread;
 use App\Models\Comment;
+use App\Models\Reply;
 use App\Models\Review;
-use App\Models\Vote;
-use App\Models\User;
-use App\DTOs\VoteDTO;
+use App\Enums\VoteType;
+use App\Http\Requests\VoteRequest;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+use Throwable;
 
 /**
  * Vote Service
  *
- * Handles voting logic for threads, comments, and reviews.
- * Provides methods for casting, updating, and removing votes, as well as aggregating vote statistics.
+ * Handles voting logic for any votable model (threads, comments, reviews, protocols, replies).
+ * Uses polymorphic relationships to provide a unified voting interface.
  *
  * Features:
- * - Vote on threads, comments, and reviews
+ * - Unified voting for any votable model
  * - Handles vote toggling and updates
- * - Aggregates and returns vote statistics
+ * - DB transactions for data integrity
+ * - Comprehensive error handling
  *
  * @package App\Services
  * @author Christian Bangay
- * @version 1.0.0
+ * @version 2.0.0
  * @since 2025-07-31
  *
- * @see App\Models\Thread
- * @see App\Models\Comment
- * @see App\Models\Review
  * @see App\Models\Vote
  * @see App\Models\User
- * @see App\DTOs\VoteDTO
+ * @see App\Http\Resources\VoteResource
  */
 class VoteService
 {
     /**
-     * Vote on a thread.
+     * Store a vote (create, update, or remove).
      *
-     * @param Thread $thread
-     * @param User $user
-     * @param string $type
-     * @return array
+     * @param VoteRequest $request
+     * @return Vote|null
+     * @throws ValidationException
      */
-    public function voteOnThread(Thread $thread, User $user, string $type): array
+    public function store(VoteRequest $request): ?Vote
     {
-        // Check if user already voted on this thread
-        $existingVote = $thread->votes()
-            ->where('user_id', $user->getKey())
-            ->first();
+        try {
+            return DB::transaction(function () use ($request) {
+                $data = $request->validated();
 
-        $vote = null;
-        $message = '';
+                $type = match ($data['votable_type']) {
+                    'thread' => Thread::class,
+                    'comment' => Comment::class,
+                    'reply' => Reply::class,
+                    'review' => Review::class,
+                    default => abort(400, 'Invalid votable type'),
+                };
 
-        if ($existingVote) {
-            if ($existingVote->type === $type) {
-                // User is trying to vote the same way again - remove the vote
-                $existingVote->delete();
-                $message = 'Vote removed successfully';
-            } else {
-                // User is changing their vote
-                $existingVote->update(['type' => $type]);
-                $message = 'Vote updated successfully';
-                $vote = VoteDTO::fromModel($existingVote);
-            }
-        } else {
-            // Create new vote
-            $newVote = $thread->votes()->create([
-                'type' => $type,
-                'user_id' => $user->getKey(),
+                // Load votable with necessary relationships
+                $votable = match ($type) {
+                    Comment::class => $type::with('thread')->findOrFail($data['votable_id']),
+                    Reply::class => $type::with('comment.thread')->findOrFail($data['votable_id']),
+                    Review::class => $type::with('protocol')->findOrFail($data['votable_id']),
+                    default => $type::findOrFail($data['votable_id']),
+                };
+
+                $voteType = $data['vote_type'];
+
+                $existingVote = $votable->votes()->where('user_id', Auth::id())->first();
+
+                // If user votes the same way again, remove the vote
+                if ($existingVote && $existingVote->type === $voteType) {
+                    $existingVote->delete();
+                    return null;
+                }
+
+                // If user is changing their vote, update it
+                if ($existingVote && $existingVote->type !== $voteType) {
+                    $existingVote->update([
+                        'type' => $voteType,
+                    ]);
+                    return $existingVote->fresh()->load(['user']);
+                }
+
+                // Create new vote
+                $vote = $votable->votes()->create([
+                    'type' => $voteType,
+                    'user_id' => Auth::id(),
+                ])->load(['user']);
+
+                return $vote;
+            });
+        } catch (ValidationException $e) {
+            throw $e;
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t process your vote due to a server error. Please try again.';
+
+            throw ValidationException::withMessages([
+                'vote' => [$message],
             ]);
-            $message = 'Voted successfully';
-            $vote = VoteDTO::fromModel($newVote);
         }
-
-        // Load votes with the thread to calculate counts efficiently
-        $thread->load('votes');
-        $votesCollection = collect($thread->votes);
-        $upvotes = $votesCollection->where('type', 'upvote')->count();
-        $downvotes = $votesCollection->where('type', 'downvote')->count();
-
-        $responseData = [
-            'thread' => [
-                'id' => $thread->getKey(),
-                'upvotes' => $upvotes,
-                'downvotes' => $downvotes,
-                'vote_score' => $upvotes - $downvotes,
-            ]
-        ];
-
-        // Only include vote in response if it exists
-        if ($vote !== null) {
-            $responseData['vote'] = $vote->toArray();
-        }
-
-        return [
-            'message' => $message,
-            'data' => $responseData
-        ];
-    }
-
-    /**
-     * Vote on a comment.
-     *
-     * @param Comment $comment
-     * @param User $user
-     * @param string $type
-     * @return array
-     */
-    public function voteOnComment(Comment $comment, User $user, string $type): array
-    {
-        // Check if user already voted on this comment
-        $existingVote = $comment->votes()
-            ->where('user_id', $user->getKey())
-            ->first();
-
-        $vote = null;
-        $message = '';
-
-        if ($existingVote) {
-            if ($existingVote->type === $type) {
-                // User is trying to vote the same way again - remove the vote
-                $existingVote->delete();
-                $message = 'Vote removed successfully';
-            } else {
-                // User is changing their vote
-                $existingVote->update(['type' => $type]);
-                $message = 'Vote updated successfully';
-                $vote = VoteDTO::fromModel($existingVote);
-            }
-        } else {
-            // Create new vote
-            $newVote = $comment->votes()->create([
-                'type' => $type,
-                'user_id' => $user->getKey(),
-            ]);
-            $message = 'Voted successfully';
-            $vote = VoteDTO::fromModel($newVote);
-        }
-
-        // Load votes with the comment to calculate counts efficiently
-        $comment->load('votes');
-        $votesCollection = collect($comment->votes);
-        $upvotes = $votesCollection->where('type', 'upvote')->count();
-        $downvotes = $votesCollection->where('type', 'downvote')->count();
-
-        $responseData = [
-            'comment' => [
-                'id' => $comment->getKey(),
-                'upvotes' => $upvotes,
-                'downvotes' => $downvotes,
-                'vote_score' => $upvotes - $downvotes,
-            ]
-        ];
-
-        // Only include vote in response if it exists
-        if ($vote !== null) {
-            $responseData['vote'] = $vote->toArray();
-        }
-
-        return [
-            'message' => $message,
-            'data' => $responseData
-        ];
-    }
-
-    /**
-     * Vote on a review.
-     *
-     * @param Review $review
-     * @param User $user
-     * @param string $type
-     * @return array
-     */
-    public function voteOnReview(Review $review, User $user, string $type): array
-    {
-        // Check if user already voted on this review
-        $existingVote = Vote::where('user_id', $user->id)
-            ->where('votable_type', Review::class)
-            ->where('votable_id', $review->id)
-            ->first();
-
-        $message = '';
-
-        if ($existingVote) {
-            if ($existingVote->type === $type) {
-                // User is trying to vote the same way again - remove the vote
-                $existingVote->delete();
-                $message = 'Vote removed successfully';
-            } else {
-                // User is changing their vote
-                $existingVote->update(['type' => $type]);
-                $message = 'Vote updated successfully';
-            }
-        } else {
-            // Create new vote
-            Vote::create([
-                'user_id' => $user->id,
-                'votable_type' => Review::class,
-                'votable_id' => $review->id,
-                'type' => $type,
-            ]);
-            $message = 'Vote recorded successfully';
-        }
-
-        // Refresh the review to get updated counts
-        $review->refresh();
-
-        return [
-            'message' => $message,
-            'data' => [
-                'helpful_count' => $review->helpful_count,
-                'not_helpful_count' => $review->not_helpful_count,
-                'user_vote' => $review->hasUserVotedHelpful($user->id) ? 'helpful' : ($review->hasUserVotedNotHelpful($user->id) ? 'not_helpful' : null),
-            ]
-        ];
     }
 }

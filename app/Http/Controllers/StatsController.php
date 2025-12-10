@@ -3,7 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Services\StatService;
-use App\DTOs\ApiResponse;
+use App\Http\Resources\ApiResponseResource;
 use Illuminate\Http\JsonResponse;
 
 /**
@@ -27,7 +27,6 @@ use Illuminate\Http\JsonResponse;
  * @since 2025-07-31
  *
  * @see App\Services\StatService
- * @see App\DTOs\StatsDTO
  */
 class StatsController extends Controller
 {
@@ -42,23 +41,14 @@ class StatsController extends Controller
      * Retrieve comprehensive dashboard statistics and metrics.
      *
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Exception When fetching statistics fails due to server error
      */
     public function dashboard(): JsonResponse
     {
-        try {
-            $statsDto = $this->statService->getDashboardStats();
+        $stats = $this->statService->index();
 
-            return ApiResponse::success(
-                data: $statsDto->toArray(),
-                message: 'Dashboard stats fetched successfully.'
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            return ApiResponse::error(
-                message: 'Failed to fetch dashboard stats',
-                statusCode: 500,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        }
+        return ApiResponseResource::success(
+            message: 'Dashboard stats fetched successfully.',
+            data: $stats
+        )->toJsonResponse();
     }
 }

@@ -3,13 +3,14 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 
 /**
- * @property int $id
+ * @property string $id
  * @property string $name
  * @property string $email
  * @property string $password
@@ -17,7 +18,6 @@ use Laravel\Sanctum\HasApiTokens;
  * @property \Carbon\Carbon $created_at
  * @property \Carbon\Carbon $updated_at
  * @property string|null $remember_token
- * @property-read array $activity_stats
  * @property-read \Illuminate\Database\Eloquent\Collection|\App\Models\Protocol[] $protocols
  * @property-read \Illuminate\Database\Eloquent\Collection|\App\Models\Thread[] $threads
  * @property-read \Illuminate\Database\Eloquent\Collection|\App\Models\Comment[] $comments
@@ -26,7 +26,10 @@ use Laravel\Sanctum\HasApiTokens;
  */
 class User extends Authenticatable
 {
-    use HasFactory, Notifiable, HasApiTokens;
+    use HasFactory, Notifiable, HasApiTokens, HasUuids;
+
+    public $incrementing = false;
+    protected $keyType = 'string';
 
     /**
      * The attributes that are mass assignable.
@@ -103,42 +106,6 @@ class User extends Authenticatable
         return $this->hasMany(Review::class, 'author', 'name');
     }
 
-    /**
-     * Get the user's activity statistics.
-     */
-    public function getActivityStatsAttribute(): array
-    {
-        return [
-            'total_protocols' => $this->protocols()->count(),
-            'total_threads' => $this->threads()->count(),
-            'total_comments' => $this->comments()->count(),
-            'total_reviews' => $this->reviews()->count(),
-            'total_votes_received' => $this->getTotalVotesReceived(),
-        ];
-    }
-
-    /**
-     * Get total votes received by the user across all their content.
-     */
-    public function getTotalVotesReceived(): int
-    {
-        $protocolVotes = $this->protocols()
-            ->withCount(['reviews'])
-            ->get()
-            ->sum('reviews_count');
-
-        $threadVotes = $this->threads()
-            ->withCount(['votes'])
-            ->get()
-            ->sum('votes_count');
-
-        $commentVotes = $this->comments()
-            ->withCount(['votes'])
-            ->get()
-            ->sum('votes_count');
-
-        return $protocolVotes + $threadVotes + $commentVotes;
-    }
 
     /**
      * Check if the user has verified their email.

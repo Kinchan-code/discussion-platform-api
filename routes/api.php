@@ -1,19 +1,21 @@
 <?php
-// filepath: c:\Users\Simplevia\Documents\Tian\Upskill\discussion-platform-api\routes\api.php
 
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\ProtocolController;
-use App\Http\Controllers\ThreadController;
-use App\Http\Controllers\CommentController;
-use App\Http\Controllers\ReviewController;
-use App\Http\Controllers\VoteController;
-use App\Http\Controllers\AuthController;
-use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\StatsController;
-use App\Http\Controllers\TagController;
 
-// API Documentation
+Route::prefix('v1')->group(function () {
+    require base_path('routes/modules/auth.php');
+    require base_path('routes/modules/tags.php');
+    require base_path('routes/modules/profile.php');
+    require base_path('routes/modules/votes.php');
+    require base_path('routes/modules/protocols.php');
+    require base_path('routes/modules/threads.php');
+    require base_path('routes/modules/comments.php');
+    require base_path('routes/modules/replies.php');
+    require base_path('routes/modules/reviews.php');
+    require base_path('routes/modules/stats.php');
+    require base_path('routes/modules/search.php');
+});
+
 Route::get('/', function () {
     return response()->json([
         'message' => 'Discussion Platform API',
@@ -31,7 +33,7 @@ Route::get('/', function () {
                 'PUT /profile' => 'Update current user profile [AUTH]',
                 'GET /profile/statistics' => 'Get user activity statistics [AUTH]',
                 'GET /profile/replies' => 'Get user\'s reply history across all threads (?sort=recent|popular|oldest&highlight_reply=id) [AUTH]',
-                'GET /profile/comments' => 'Get user\'s top-level comments across all threads (?sort=recent|popular|oldest&highlight_comment=id) [AUTH]',
+                'GET /profile/comments' => 'Get user\'s top-level comments across all threads (?sort=recent|popular|oldest) [AUTH]',
                 'GET /profile/reviews' => 'Get user\'s reviews across all protocols (?sort=recent|oldest|rating_high|rating_low&highlight_review=id) [AUTH]'
             ],
             'protocols' => [
@@ -55,14 +57,20 @@ Route::get('/', function () {
                 'DELETE /threads/{id}' => 'Delete thread [AUTH]'
             ],
             'comments' => [
-                'GET /threads/{thread}/comments' => 'Get comments (?author=username&highlight_comment=123&highlight_reply=456) [Smart Highlighting]',
-                'GET /comments/{comment}/replies' => 'Get comment replies',
-                'GET /replies/{reply}/nested' => 'Get nested replies for specific reply (progressive loading)',
+                'GET /threads/{thread}/comments' => 'Get comments (?author=username)',
                 'POST /threads/{thread}/comments' => 'Create comment [AUTH]',
-                'POST /comments/{comment}/reply' => 'Reply to comment [AUTH]',
-                'POST /replies/{reply}/reply' => 'Reply to reply [AUTH]',
+                'GET /comments/{comment}' => 'Get single comment',
                 'PUT /comments/{comment}' => 'Update comment [AUTH]',
                 'DELETE /comments/{comment}' => 'Delete comment [AUTH]'
+            ],
+            'replies' => [
+                'GET /comments/{comment}/replies' => 'Get replies for a comment',
+                'POST /comments/{comment}/replies' => 'Create reply to comment [AUTH]',
+                'GET /replies/{reply}/children' => 'Get nested replies (replies to a reply)',
+                'POST /replies/{reply}/children' => 'Create nested reply [AUTH]',
+                'GET /replies/{reply}' => 'Get single reply',
+                'PUT /replies/{reply}' => 'Update reply [AUTH]',
+                'DELETE /replies/{reply}' => 'Delete reply [AUTH]'
             ],
             'reviews' => [
                 'GET /protocols/{protocol}/reviews' => 'Get reviews (?author=username&highlight_review=id)',
@@ -71,16 +79,17 @@ Route::get('/', function () {
                 'DELETE /reviews/{id}' => 'Delete review [AUTH]'
             ],
             'voting' => [
-                'POST /threads/{thread}/vote' => 'Vote on thread [AUTH]',
-                'POST /comments/{comment}/vote' => 'Vote on comment [AUTH]',
-                'POST /reviews/{review}/vote' => 'Vote on review [AUTH]'
+                'POST /votes' => 'Vote on any votable (thread, comment, reply, review) [AUTH]'
             ],
             'analytics' => [
                 'GET /stats/dashboard' => 'Platform statistics'
             ],
+            'search' => [
+                'GET /search' => 'Global search (?q=query&type=protocol|thread&per_page=10&page=1)',
+                'GET /search/suggestions' => 'Search suggestions for autocomplete (?q=query&limit=5)'
+            ],
             'tags' => [
-                'GET /tags/popular' => 'Popular tags',
-                'POST /tags/reindex' => 'Rebuild search index [AUTH]'
+                'GET /tags/popular' => 'Popular tags'
             ]
         ],
         'sample_requests' => [
@@ -160,33 +169,41 @@ Route::get('/', function () {
             ],
             'comments' => [
                 'create' => [
-                    'url' => 'POST /api/threads/{thread}/comments',
+                    'url' => 'POST /api/v1/threads/{thread}/comments',
                     'headers' => ['Authorization' => 'Bearer {token}'],
                     'body' => [
                         'body' => 'This is my comment on the thread...'
                     ]
                 ],
-                'reply_to_comment' => [
-                    'url' => 'POST /api/comments/{comment}/reply',
+                'update' => [
+                    'url' => 'PUT /api/v1/comments/{comment}',
+                    'headers' => ['Authorization' => 'Bearer {token}'],
+                    'body' => [
+                        'body' => 'Updated comment text here. Only the author can edit their own comment.'
+                    ]
+                ]
+            ],
+            'replies' => [
+                'create_reply_to_comment' => [
+                    'url' => 'POST /api/v1/comments/{comment}/replies',
                     'headers' => ['Authorization' => 'Bearer {token}'],
                     'body' => [
                         'body' => 'This is my reply to your comment...'
                     ]
                 ],
-                'reply_to_reply' => [
-                    'url' => 'POST /api/replies/{reply}/reply',
+                'create_nested_reply' => [
+                    'url' => 'POST /api/v1/replies/{reply}/children',
                     'headers' => ['Authorization' => 'Bearer {token}'],
                     'body' => [
-                        'body' => 'This is my nested reply...'
+                        'body' => 'This is my nested reply to your reply...'
                     ]
                 ],
                 'update' => [
-                    'url' => 'PUT /api/comments/{comment}',
+                    'url' => 'PATCH /api/v1/replies/{reply}',
                     'headers' => ['Authorization' => 'Bearer {token}'],
                     'body' => [
-                        'body' => 'Updated comment text here. This works for both comments and replies.'
-                    ],
-                    'description' => 'Update any comment or reply. Only the author can edit their own content.'
+                        'body' => 'Updated reply text here. Only the author can edit their own reply.'
+                    ]
                 ]
             ],
             'reviews' => [
@@ -209,25 +226,58 @@ Route::get('/', function () {
             ],
             'voting' => [
                 'vote_thread' => [
-                    'url' => 'POST /api/threads/{thread}/vote',
+                    'url' => 'POST /api/v1/votes',
                     'headers' => ['Authorization' => 'Bearer {token}'],
                     'body' => [
-                        'type' => 'upvote'
+                        'votable_id' => 1,
+                        'votable_type' => 'thread',
+                        'vote_type' => 'upvote'
                     ]
                 ],
                 'vote_comment' => [
-                    'url' => 'POST /api/comments/{comment}/vote',
+                    'url' => 'POST /api/v1/votes',
                     'headers' => ['Authorization' => 'Bearer {token}'],
                     'body' => [
-                        'type' => 'downvote'
+                        'votable_id' => 1,
+                        'votable_type' => 'comment',
+                        'vote_type' => 'downvote'
                     ]
                 ],
                 'vote_review' => [
-                    'url' => 'POST /api/reviews/{review}/vote',
+                    'url' => 'POST /api/v1/votes',
                     'headers' => ['Authorization' => 'Bearer {token}'],
                     'body' => [
-                        'type' => 'upvote'
+                        'votable_id' => 1,
+                        'votable_type' => 'review',
+                        'vote_type' => 'upvote'
                     ]
+                ],
+                'vote_reply' => [
+                    'url' => 'POST /api/v1/votes',
+                    'headers' => ['Authorization' => 'Bearer {token}'],
+                    'body' => [
+                        'votable_id' => 1,
+                        'votable_type' => 'reply',
+                        'vote_type' => 'upvote'
+                    ]
+                ]
+            ],
+            'search' => [
+                'global_search' => [
+                    'url' => 'GET /api/v1/search?q=protocol&type=protocol&per_page=10&page=1',
+                    'description' => 'Search across all content types. Query params: q (required), type (optional: protocol|thread), per_page (default: 10, max: 50), page (default: 1)'
+                ],
+                'search_protocols_only' => [
+                    'url' => 'GET /api/v1/search?q=blockchain&type=protocol',
+                    'description' => 'Search only protocols'
+                ],
+                'search_threads_only' => [
+                    'url' => 'GET /api/v1/search?q=discussion&type=thread',
+                    'description' => 'Search only threads'
+                ],
+                'search_suggestions' => [
+                    'url' => 'GET /api/v1/search/suggestions?q=prot&limit=5',
+                    'description' => 'Get autocomplete suggestions. Query params: q (required, min 2 chars), limit (default: 5, max: 10)'
                 ]
             ]
         ],
@@ -235,73 +285,10 @@ Route::get('/', function () {
             'author_filtering' => 'Add ?author=username to most GET endpoints for user-specific content',
             'pagination' => 'Use ?page=1&per_page=15 for paginated results',
             'sorting' => 'Use ?sort=recent|popular|rating for different sort orders',
-            'smart_highlighting' => 'Highlighted comments/replies automatically included even if on different pages',
-            'deep_linking' => 'Use ?highlight_comment=id or ?highlight_reply=id for smart highlighting',
             'service_architecture' => 'Clean separation with ProfileService handling business logic',
-            'profile_content' => 'Get user comments and replies separately with /profile/comments and /profile/replies'
+            'profile_content' => 'Get user comments separately with /profile/comments'
         ]
     ]);
 });
 
-// Authentication Routes
-Route::post('/register', [AuthController::class, 'register']);
-Route::post('/login', [AuthController::class, 'login']);
 
-// Tag Routes (public)
-Route::get('/tags/popular', [TagController::class, 'popularTags']);
-
-// Protected Routes
-Route::middleware('auth:sanctum')->group(function () {
-    Route::post('/logout', [AuthController::class, 'logout']);
-    Route::get('/me', [AuthController::class, 'me']); // Get current user
-
-    // Profile Routes (simplified - only unique endpoints)
-    Route::get('/profile', [ProfileController::class, 'show']);
-    Route::put('/profile', [ProfileController::class, 'update']);
-    Route::get('/profile/statistics', [ProfileController::class, 'statistics']);
-    Route::get('/profile/replies', [ProfileController::class, 'replies']); // Only unique endpoint
-    Route::get('/profile/comments', [ProfileController::class, 'comments']); // Get user's top-level comments
-    Route::get('/profile/reviews', [ProfileController::class, 'reviews']); // Get user's reviews across all protocols
-
-    // Search reindex
-    Route::post('/tags/reindex', [TagController::class, 'reindex']);
-
-    // Main Resources (protected)
-    Route::apiResource('protocols', ProtocolController::class)->except(['index', 'show']);
-    Route::apiResource('threads', ThreadController::class)->except(['index', 'show']);
-
-    // Nested Routes (protected)
-    Route::post('/protocols/{protocol}/reviews', [ReviewController::class, 'store']);
-    Route::put('/reviews/{id}', [ReviewController::class, 'update']);
-    Route::delete('/reviews/{id}', [ReviewController::class, 'destroy']);
-
-    Route::post('/threads/{thread}/comments', [CommentController::class, 'store']);
-    Route::post('/comments/{comment}/reply', [CommentController::class, 'replyToComment']);
-    Route::post('/replies/{reply}/reply', [CommentController::class, 'replyToReply']);
-    Route::put('/comments/{comment}', [CommentController::class, 'update']);
-    Route::delete('/comments/{comment}', [CommentController::class, 'destroy']);
-
-    Route::post('/threads/{thread}/vote', [VoteController::class, 'voteOnThread']);
-    Route::post('/comments/{comment}/vote', [VoteController::class, 'voteOnComment']);
-    Route::post('/reviews/{review}/vote', [VoteController::class, 'voteOnReview']);
-});
-
-// Public Routes (read-only, no authentication required)
-// These support author filtering for user content
-Route::get('/protocols', [ProtocolController::class, 'index']);
-Route::get('/protocols/featured', [ProtocolController::class, 'featured']);
-Route::get('/protocols/filters', [ProtocolController::class, 'filters']);
-Route::get('/protocols/{id}', [ProtocolController::class, 'show']);
-Route::get('/protocols/{id}/stats', [ProtocolController::class, 'stats']);
-Route::get('/threads', [ThreadController::class, 'index']);
-Route::get('/threads/trending', [ThreadController::class, 'trending']);
-Route::get('/threads/{id}', [ThreadController::class, 'show']);
-Route::get('/threads/{id}/stats', [ThreadController::class, 'stats']);
-Route::get('/protocols/{protocol}/threads', [ThreadController::class, 'byProtocol']);
-Route::get('/protocols/{protocol}/reviews', [ReviewController::class, 'index']);
-Route::get('/threads/{thread}/comments', [CommentController::class, 'index']);
-Route::get('/comments/{comment}/replies', [CommentController::class, 'replies']);
-Route::get('/replies/{reply}/nested', [CommentController::class, 'nestedReplies']);
-
-// Public stats route
-Route::get('/stats/dashboard', [StatsController::class, 'dashboard']);

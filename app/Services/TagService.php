@@ -2,21 +2,19 @@
 
 namespace App\Services;
 
-use App\DTOs\TagDTO;
-use App\Models\Protocol;
-use App\Models\Thread;
-use Illuminate\Support\Facades\Artisan;
+use App\Models\Tag;
+use Illuminate\Validation\ValidationException;
+use Throwable;
 
 /**
  * Tag Management Service
  *
- * Handles tag analytics, aggregation, and search index management for the discussion platform.
- * Provides methods for retrieving popular tags and reindexing Protocol and Thread models for search.
+ * Handles tag analytics and aggregation for the discussion platform.
+ * Provides methods for retrieving popular tags.
  *
  * Features:
  * - Aggregates and ranks tags from protocols
  * - Provides popular tag analytics for UI and API
- * - Manages reindexing of Protocol and Thread models with Laravel Scout
  * - Optimized for performance and scalability
  *
  * @package App\Services
@@ -25,57 +23,42 @@ use Illuminate\Support\Facades\Artisan;
  * @since 2025-07-31
  *
  * @see App\Models\Protocol
- * @see App\Models\Thread
- * @see App\DTOs\TagDTO
+ * @see App\Models\Tag
  */
 class TagService
 {
     /**
      * Retrieve the most popular tags from protocols.
      *
-     * @return array<TagDTO>
-     */
-    public function getPopularTags(): array
-    {
-        $tags = Protocol::whereNotNull('tags')
-            ->select('tags')
-            ->get()
-            ->pluck('tags')
-            ->flatten()
-            ->filter()
-            ->countBy()
-            ->sortDesc()
-            ->take(6)
-            ->map(function ($count, $tag) {
-                return new TagDTO(
-                    id: $tag,
-                    tag: $tag,
-                    count: $count
-                );
-            })
-            ->values()
-            ->toArray();
-
-        return $tags;
-    }
-
-    /**
-     * Reindex Protocol and Thread models for search.
-     *
      * @return array
+     * @throws ValidationException
      */
-    public function reindexSearchModels(): array
+    public function index(): array
     {
-        Artisan::call('scout:flush', ['model' => 'App\Models\Protocol']);
-        Artisan::call('scout:flush', ['model' => 'App\Models\Thread']);
+        try {
+            return Tag::withCount('protocols')
+                ->orderBy('protocols_count', 'desc')
+                ->take(6)
+                ->get()
+                ->map(function ($tag) {
+                    return [
+                        'id' => $tag->id,
+                        'tag' => $tag->tag,
+                        'count' => $tag->protocols_count ?? null,
+                    ];
+                })
+                ->toArray();
+        } catch (Throwable $e) {
+            report($e);
 
-        Artisan::call('scout:import', ['model' => 'App\Models\Protocol']);
-        Artisan::call('scout:import', ['model' => 'App\Models\Thread']);
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t load tags due to a server error. Please try again.';
 
-        return [
-            'protocols_indexed' => Protocol::count(),
-            'threads_indexed' => Thread::count(),
-            'timestamp' => now()->toISOString(),
-        ];
+            throw ValidationException::withMessages([
+                'tags' => [$message],
+            ]);
+        }
     }
+
 }

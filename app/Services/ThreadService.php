@@ -3,7 +3,13 @@
 namespace App\Services;
 
 use App\Models\Thread;
-use Illuminate\Pagination\LengthAwarePaginator;
+use App\Http\Requests\ThreadRequest;
+use App\Enums\VoteType;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+use Throwable;
 
 
 /**
@@ -13,14 +19,15 @@ use Illuminate\Pagination\LengthAwarePaginator;
  * Provides methods for paginated thread queries, filtering, sorting, trending, and efficient vote/comment aggregation.
  *
  * Features:
- * - Paginated thread listing with filters and sorting
+ * - Paginated thread listing with filters and sorting using Eloquent relationships
  * - Thread creation, update, and deletion
  * - Efficient vote and comment aggregation
  * - Trending and protocol-specific thread queries
+ * - Uses eager loading (with) for protocol relationship to avoid N+1 queries
  *
  * @package App\Services
  * @author Christian Bangay
- * @version 1.0.0
+ * @version 2.0.0
  * @since 2025-07-31
  *
  * @see App\Models\Thread
@@ -30,185 +37,285 @@ class ThreadService
     /**
      * Get a paginated list of threads with optional filters and sorting.
      *
-     * @param array $params
-     * @return LengthAwarePaginator
+     * @param Request $request
+     * @return \Illuminate\Contracts\Pagination\LengthAwarePaginator
+     * @throws ValidationException
      */
-    public function listThreads($params): LengthAwarePaginator
+    public function index(Request $request): \Illuminate\Contracts\Pagination\LengthAwarePaginator
     {
-        $perPage = $params['per_page'] ?? 15;
-        $sort = $params['sort'] ?? 'recent';
-        $protocolId = $params['protocol_id'] ?? null;
-        $author = $params['author'] ?? null;
+        try {
+            $perPage = $request->input('per_page', 15);
+            $sort = $request->input('sort', 'recent');
+            $protocolId = $request->input('protocol_id');
+            $author = $request->input('author');
 
-        $query = Thread::with([
-            'protocol' => function ($query) {
-                $query->select('id', 'title', 'content', 'tags', 'author', 'created_at', 'updated_at');
-            },
-            'votes'
-        ])
-            ->withCount(['comments']);
-
-        if ($author) {
-            $query->where('author', $author);
-        }
-
-        if ($protocolId) {
-            $query->where('protocol_id', $protocolId);
-        }
-
-        switch ($sort) {
-            case 'popular':
-                $query->select('threads.*')
-                    ->leftJoin('votes', function ($join) {
-                        $join->on('threads.id', '=', 'votes.votable_id')
-                            ->where('votes.votable_type', '=', 'App\\Models\\Thread');
-                    })
-                    ->groupBy('threads.id')
-                    ->orderByRaw('COUNT(votes.id) DESC')
-                    ->orderBy('comments_count', 'desc')
-                    ->orderBy('created_at', 'desc');
-                break;
-            case 'rating':
-                $query->select('threads.*')
-                    ->leftJoin('votes', function ($join) {
-                        $join->on('threads.id', '=', 'votes.votable_id')
-                            ->where('votes.votable_type', '=', 'App\\Models\\Thread')
-                            ->where('votes.type', '=', 'upvote');
-                    })
-                    ->groupBy('threads.id')
-                    ->orderByRaw('COUNT(votes.id) DESC')
-                    ->orderBy('created_at', 'desc');
-                break;
-            case 'recent':
-            default:
-                $query->orderBy('created_at', 'desc');
-                break;
-        }
-
-        $threads = $query->paginate($perPage);
-
-        $threads->getCollection()->transform(function ($thread) {
-            if ($thread->votes) {
-                $votesCollection = collect($thread->votes);
-                $thread->setAttribute('upvotes', $votesCollection->where('type', 'upvote')->count());
-                $thread->setAttribute('downvotes', $votesCollection->where('type', 'downvote')->count());
-                $thread->setAttribute('votes_count', $thread->votes->count());
-                $thread->setAttribute('vote_score', $thread->upvotes - $thread->downvotes);
+            // Handle 'current_user' special case for authenticated requests
+            if ($author === 'current_user') {
+                if (!Auth::guard('sanctum')->check()) {
+                    throw new \Exception('Authentication required for current_user filter.');
+                }
+                $author = Auth::guard('sanctum')->user()->name;
             }
-            return $thread;
-        });
 
-        return $threads;
+            $query = Thread::with(['protocol'])
+                ->withCount(['comments'])
+                ->withCount([
+                    'votes as upvotes' => function ($q) {
+                        $q->where('type', \App\Enums\VoteType::UPVOTE->value);
+                    },
+                    'votes as downvotes' => function ($q) {
+                        $q->where('type', \App\Enums\VoteType::DOWNVOTE->value);
+                    },
+                    'votes as vote_score' => function ($q) {
+                        $q->selectRaw("SUM(" . \App\Enums\VoteType::sqlCaseExpression() . ")");
+                    }
+                ]);
+
+            // Load user's vote if authenticated, otherwise load empty collection
+            $query->with(['votes' => function ($q) {
+                if (Auth::guard('sanctum')->check()) {
+                    $q->where('user_id', Auth::guard('sanctum')->id());
+                } else {
+                    $q->whereRaw('1 = 0'); // Load nothing for unauthenticated users
+                }
+            }]);
+
+            if ($author) {
+                $query->where('author', $author);
+            }
+
+            if ($protocolId) {
+                $query->where('protocol_id', $protocolId);
+            }
+
+            switch ($sort) {
+                case 'popular':
+                    $query->orderByDesc('vote_score')
+                        ->orderByDesc('comments_count')
+                        ->orderByDesc('created_at');
+                    break;
+                case 'rating':
+                    $query->orderByDesc('vote_score')
+                        ->orderByDesc('created_at');
+                    break;
+                case 'recent':
+                default:
+                    $query->orderByDesc('created_at');
+                    break;
+            }
+
+            return $query->paginate($perPage);
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t load threads due to a server error. Please try again.';
+
+            throw ValidationException::withMessages([
+                'threads' => [$message],
+            ]);
+        }
     }
 
     /**
      * Retrieve a thread by ID with related protocol and votes.
      *
-     * @param int|string $id
-     * @return Thread|null
+     * @param string $id
+     * @param Request $request
+     * @return Thread
+     * @throws ValidationException
      */
-    public function getThread($id): ?Thread
+    public function show(string $id, Request $request): Thread
     {
-        $thread = Thread::with([
-            'protocol' => function ($query) {
-                $query->select('id', 'title', 'content', 'tags', 'author', 'created_at', 'updated_at'); // Include all fields needed by DTO
-            },
-            'votes' // Eager load votes for efficient counting
-        ])
-            ->withCount(['comments'])
-            ->findOrFail($id);
+        try {
+            $query = Thread::with(['protocol'])
+                ->withCount(['comments'])
+                ->withCount([
+                    'votes as upvotes' => function ($q) {
+                        $q->where('type', \App\Enums\VoteType::UPVOTE->value);
+                    },
+                    'votes as downvotes' => function ($q) {
+                        $q->where('type', \App\Enums\VoteType::DOWNVOTE->value);
+                    },
+                    'votes as vote_score' => function ($q) {
+                        $q->selectRaw("SUM(" . \App\Enums\VoteType::sqlCaseExpression() . ")");
+                    }
+                ]);
 
-        if ($thread && $thread->votes) {
-            // Calculate vote counts efficiently
-            $votesCollection = collect($thread->votes);
-            $thread->setAttribute('upvotes', $votesCollection->where('type', 'upvote')->count());
-            $thread->setAttribute('downvotes', $votesCollection->where('type', 'downvote')->count());
-            $thread->setAttribute('votes_count', $thread->votes->count());
-            $thread->setAttribute('vote_score', $thread->getAttribute('upvotes') - $thread->getAttribute('downvotes'));
+            // Load user's vote if authenticated, otherwise load empty collection
+            $query->with(['votes' => function ($q) {
+                if (Auth::guard('sanctum')->check()) {
+                    $q->where('user_id', Auth::guard('sanctum')->id());
+                } else {
+                    $q->whereRaw('1 = 0'); // Load nothing for unauthenticated users
+                }
+            }]);
+            
+            return $query->findOrFail($id);
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t load the thread due to a server error. Please try again.';
+
+            throw ValidationException::withMessages([
+                'thread' => [$message],
+            ]);
         }
-
-        return $thread;
     }
 
     /**
      * Get paginated threads for a specific protocol.
      *
-     * @param int|string $protocolId
-     * @param array $params
-     * @return LengthAwarePaginator
+     * @param string $protocolId
+     * @param Request $request
+     * @return \Illuminate\Contracts\Pagination\LengthAwarePaginator
      */
-    public function getThreadsByProtocol($protocolId, $params): LengthAwarePaginator
+    public function getThreadsByProtocol(string $protocolId, Request $request): \Illuminate\Contracts\Pagination\LengthAwarePaginator
     {
-        $perPage = $params['per_page'] ?? 15;
+        $perPage = $request->input('per_page', 15);
 
-        return Thread::with(['protocol'])
-            ->withCount(['comments', 'votes'])
-            ->withCount(['votes as upvotes' => function ($query) {
-                $query->where('type', 'upvote');
-            }])
-            ->withCount(['votes as downvotes' => function ($query) {
-                $query->where('type', 'downvote');
-            }])
-            ->where('protocol_id', $protocolId)
-            ->latest()
-            ->paginate($perPage);
+        $query = Thread::where('protocol_id', $protocolId)
+            ->with(['protocol'])
+            ->withCount(['comments'])
+            ->withCount([
+                'votes as upvotes' => function ($q) {
+                    $q->where('type', \App\Enums\VoteType::UPVOTE->value);
+                },
+                'votes as downvotes' => function ($q) {
+                    $q->where('type', \App\Enums\VoteType::DOWNVOTE->value);
+                },
+                'votes as vote_score' => function ($q) {
+                    $q->selectRaw("SUM(" . \App\Enums\VoteType::sqlCaseExpression() . ")");
+                }
+            ]);
+
+            // Load user's vote if authenticated, otherwise load empty collection
+            $query->with(['votes' => function ($q) {
+                if (Auth::guard('sanctum')->check()) {
+                    $q->where('user_id', Auth::guard('sanctum')->id());
+                } else {
+                    $q->whereRaw('1 = 0'); // Load nothing for unauthenticated users
+                }
+            }]);
+
+        return $query->latest('created_at')->paginate($perPage);
     }
 
     /**
      * Create a new thread.
      *
-     * @param array $params
-     * @param \App\Models\User $user
+     * @param ThreadRequest $request
      * @return Thread
+     * @throws ValidationException
      */
-    public function createThread($params, $user): Thread
+    public function store(ThreadRequest $request): Thread
     {
+        try {
+            return DB::transaction(function () use ($request) {
+                $data = $request->validated();
+                $user = Auth::guard('sanctum')->user();
 
-        return Thread::create([
-            'protocol_id' => $params['protocol_id'],
-            'title' => $params['title'],
-            'body' => $params['body'],
-            'author' => $user->name,
-        ]);
+                return Thread::create([
+                    'protocol_id' => $data['protocol_id'],
+                    'title' => $data['title'],
+                    'body' => $data['body'],
+                    'author' => $user->name,
+                ]);
+            });
+        } catch (ValidationException $e) {
+            throw $e;
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t create the thread due to a server error. Please try again.';
+
+            throw ValidationException::withMessages([
+                'thread' => [$message],
+            ]);
+        }
     }
 
     /**
      * Update an existing thread.
      *
-     * @param int|string $id
-     * @param array $params
-     * @return Thread|null
+     * @param string $id
+     * @param ThreadRequest $request
+     * @return Thread
+     * @throws ValidationException
      */
-    public function updateThread($id, $params): ?Thread
+    public function update(string $id, ThreadRequest $request): Thread
     {
+        try {
+            return DB::transaction(function () use ($id, $request) {
+                $thread = Thread::findOrFail($id);
+                $user = Auth::guard('sanctum')->user();
 
-        $thread = Thread::find($id);
-        if (!$thread) {
-            return null;
+                if ($thread->author !== $user->name) {
+                    throw new \Exception('You can only update threads that you created.');
+                }
+
+                $data = $request->validated();
+
+                $thread->update([
+                    'protocol_id' => $data['protocol_id'] ?? $thread->protocol_id,
+                    'title' => $data['title'] ?? $thread->title,
+                    'body' => $data['body'] ?? $thread->body,
+                ]);
+
+                return $thread;
+            });
+        } catch (ValidationException $e) {
+            throw $e;
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t update the thread due to a server error. Please try again.';
+
+            throw ValidationException::withMessages([
+                'thread' => [$message],
+            ]);
         }
-
-        $thread->update($params);
-
-        return $thread;
     }
 
 
     /**
      * Delete a thread by ID.
      *
-     * @param int|string $id
-     * @return Thread|null
+     * @param string $id
+     * @return void
+     * @throws ValidationException
      */
-    public function deleteThread($id): ?Thread
+    public function destroy(string $id): void
     {
-        $thread = Thread::find($id);
-        if (!$thread) {
-            return null;
+        try {
+            DB::transaction(function () use ($id) {
+                $thread = Thread::findOrFail($id);
+                $user = Auth::guard('sanctum')->user();
+
+                if ($thread->author !== $user->name) {
+                    throw new \Exception('You can only delete threads that you created.');
+                }
+
+                $thread->delete();
+            });
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t delete the thread due to a server error. Please try again.';
+
+            throw ValidationException::withMessages([
+                'thread' => [$message],
+            ]);
         }
-
-        $thread->delete();
-
-        return $thread;
     }
 
     /**
@@ -217,7 +324,7 @@ class ThreadService
      * @param int $id
      * @return Thread|null
      */
-    public function getThreadStatistics(int $id): ?Thread
+    public function getThreadStatistics(string $id): ?Thread
     {
         return Thread::withCount(['comments', 'votes'])
             ->withCount(['votes as upvotes' => function ($query) {
@@ -226,28 +333,41 @@ class ThreadService
             ->withCount(['votes as downvotes' => function ($query) {
                 $query->where('type', 'downvote');
             }])
+            ->withCount([
+                'votes as vote_score' => function ($q) {
+                    $q->selectRaw("SUM(" . \App\Enums\VoteType::sqlCaseExpression() . ")");
+                }
+            ])
             ->findOrFail($id);
     }
 
     /**
      * Get a paginated list of trending threads.
      *
-     * @param array $params
-     * @return LengthAwarePaginator
+     * @param Request $request
+     * @return \Illuminate\Contracts\Pagination\LengthAwarePaginator
      */
-    public function getTrendingThreads($params): LengthAwarePaginator
+    public function getTrendingThreads(Request $request): \Illuminate\Contracts\Pagination\LengthAwarePaginator
     {
-        $perPage = $params['per_page'] ?? 3;
+        $perPage = $request->input('per_page', 3);
 
-        return Thread::with(['protocol'])
-            ->withCount(['comments', 'votes'])
-            ->withCount(['votes as upvotes' => function ($query) {
-                $query->where('type', 'upvote');
-            }])
-            ->withCount(['votes as downvotes' => function ($query) {
-                $query->where('type', 'downvote');
-            }])
-            ->orderBy('created_at', 'desc')
-            ->paginate($perPage);
+        $query = Thread::with(['protocol'])
+            ->withCount(['comments'])
+            ->withCount([
+                'votes as vote_score' => function ($q) {
+                    $q->selectRaw("SUM(" . \App\Enums\VoteType::sqlCaseExpression() . ")");
+                }
+            ]);
+
+            // Load user's vote if authenticated, otherwise load empty collection
+            $query->with(['votes' => function ($q) {
+                if (Auth::guard('sanctum')->check()) {
+                    $q->where('user_id', Auth::guard('sanctum')->id());
+                } else {
+                    $q->whereRaw('1 = 0'); // Load nothing for unauthenticated users
+                }
+            }]);
+
+        return $query->orderBy('created_at', 'desc')->paginate($perPage);
     }
 }

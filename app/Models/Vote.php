@@ -3,15 +3,16 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 /**
- * @property int $id
- * @property int $user_id
+ * @property string $id
+ * @property string $user_id
  * @property string $votable_type
- * @property int $votable_id
+ * @property string $votable_id
  * @property string $type
  * @property \Carbon\Carbon $created_at
  * @property \Carbon\Carbon $updated_at
@@ -20,7 +21,10 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
  */
 class Vote extends Model
 {
-    use HasFactory;
+    use HasFactory, HasUuids;
+
+    public $incrementing = false;
+    protected $keyType = 'string';
 
     /**
      * The attributes that are mass assignable.

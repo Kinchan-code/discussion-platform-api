@@ -3,29 +3,33 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Laravel\Scout\Searchable;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 /**
- * @property int $id
+ * @property string $id
  * @property string $title
  * @property string $content
- * @property array $tags
  * @property string $author
  * @property float $rating
  * @property \Carbon\Carbon $created_at
  * @property \Carbon\Carbon $updated_at
- * @property-read float $average_rating
  * @property-read int|null $reviews_count
  * @property-read int|null $threads_count
  * @property-read float|null $reviews_avg_rating
  * @property-read \Illuminate\Database\Eloquent\Collection|\App\Models\Thread[] $threads
  * @property-read \Illuminate\Database\Eloquent\Collection|\App\Models\Review[] $reviews
+ * @property-read \Illuminate\Database\Eloquent\Collection|\App\Models\Tag[] $tags
  */
 class Protocol extends Model
 {
-    use HasFactory, Searchable;
+    use HasFactory, HasUuids;
+
+    public $incrementing = false;
+    protected $keyType = 'string';
 
     /**
      * The attributes that are mass assignable.
@@ -33,7 +37,6 @@ class Protocol extends Model
     protected $fillable = [
         'title',
         'content',
-        'tags',
         'author',
         'rating',
     ];
@@ -42,40 +45,8 @@ class Protocol extends Model
      * The attributes that should be cast.
      */
     protected $casts = [
-        'tags' => 'array',
         'rating' => 'float',
     ];
-
-
-    /**
-     * Get the index name for the model used by Laravel Scout.
-     *
-     * @return string
-     */
-    public function searchableAs(): string
-    {
-        return 'protocols_index';
-    }
-
-
-    /**
-     * Get the array representation of the model for search indexing.
-     *
-     * @return array
-     */
-    public function toSearchableArray(): array
-    {
-        return [
-            'id' => (string) $this->id,
-            'title' => $this->title,
-            'content' => $this->content,
-            'tags' => is_array($this->tags) ? implode(' ', $this->tags) : (string) $this->tags,
-            'author' => $this->author,
-            'rating' => (float) $this->rating,
-            'reviews_count' => $this->reviews()->count(),
-            'created_at' => $this->created_at?->timestamp ?? time(),
-        ];
-    }
 
 
     /**
@@ -88,7 +59,6 @@ class Protocol extends Model
         return $this->hasMany(Thread::class);
     }
 
-
     /**
      * Get the reviews associated with the protocol.
      *
@@ -99,25 +69,23 @@ class Protocol extends Model
         return $this->hasMany(Review::class);
     }
 
-
     /**
-     * Accessor for the average rating from related reviews.
+     * Get all votes for the protocol.
      *
-     * @return float
+     * @return MorphMany
      */
-    public function getAverageRatingAttribute(): float
+    public function votes(): MorphMany
     {
-        return $this->reviews()->avg('rating') ?? 0.0;
+        return $this->morphMany(Vote::class, 'votable');
     }
 
-
     /**
-     * Accessor for the rating attribute (alias for average rating).
+     * Get the tags associated with the protocol.
      *
-     * @return float
+     * @return BelongsToMany
      */
-    public function getRatingAttribute(): float
+    public function tags(): BelongsToMany
     {
-        return $this->getAverageRatingAttribute();
+        return $this->belongsToMany(Tag::class);
     }
 }

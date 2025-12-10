@@ -2,38 +2,31 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Thread;
-use App\Models\Comment;
-use App\Models\Vote;
-use App\Models\Review;
 use App\Services\VoteService;
-use App\DTOs\ApiResponse;
+use App\Http\Resources\ApiResponseResource;
+use App\Http\Resources\VoteResource;
+use App\Http\Requests\VoteRequest;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 
 /**
  * Vote Management Controller
  *
- * Handles all voting operations for threads, comments, and reviews within
- * the discussion platform. Supports upvotes, downvotes, and vote management
- * with user authentication and vote tracking capabilities.
+ * Handles all voting operations for threads, comments, reviews, protocols, and replies.
+ * Uses a unified endpoint that accepts votable_type and votable_id.
  *
  * Features:
- * - Vote on threads, comments, and reviews
+ * - Unified voting endpoint for all votable types
  * - Upvote and downvote functionality
  * - Vote removal and change capabilities
- * - User vote tracking and analytics
- * - Duplicate vote prevention
+ * - Returns null when vote is removed
  *
  * @package App\Http\Controllers
- * @author Your Name
- * @version 1.0.0
+ * @author Christian Bangay
+ * @version 2.0.0
  * @since 2025-07-31
  *
  * @see App\Services\VoteService
  * @see App\Models\Vote
- * @see App\Models\Thread
- * @see App\Models\Comment
  */
 class VoteController extends Controller
 {
@@ -43,110 +36,29 @@ class VoteController extends Controller
     {
         $this->voteService = $voteService;
     }
-    /**
-     * Vote on a thread.
-     *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  int  $threadId  The ID of the thread
-     * @return \Illuminate\Http\JsonResponse
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException When thread not found
-     * @throws \Illuminate\Validation\ValidationException When validation fails
-     * @throws \Exception When voting fails due to server error
-     */
-    public function voteOnThread(Request $request, int $threadId): JsonResponse
-    {
-        try {
-            $thread = Thread::findOrFail($threadId);
-
-            $validated = $request->validate([
-                'type' => ['required', 'string', 'in:upvote,downvote'],
-            ]);
-
-            $result = $this->voteService->voteOnThread($thread, $request->user(), $validated['type']);
-
-            $response = ApiResponse::success($result['data'], $result['message']);
-            return response()->json($response->toArray(), 200);
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            $response = ApiResponse::error('The requested thread does not exist.', 404);
-            return response()->json($response->toArray(), 404);
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            $response = ApiResponse::error($e->getMessage(), 422, $e->errors());
-            return response()->json($response->toArray(), 422);
-        } catch (\Exception $e) {
-            $response = ApiResponse::error($e->getMessage(), 500);
-            return response()->json($response->toArray(), 500);
-        }
-    }
 
     /**
-     * Vote on a comment.
+     * Store a vote (create, update, or remove).
      *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  int  $commentId  The ID of the comment
-     * @return \Illuminate\Http\JsonResponse
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException When comment not found
-     * @throws \Illuminate\Validation\ValidationException When validation fails
-     * @throws \Exception When voting fails due to server error
+     * @param VoteRequest $request
+     * @return JsonResponse
      */
-    public function voteOnComment(Request $request, int $commentId): JsonResponse
+    public function store(VoteRequest $request): JsonResponse
     {
-        try {
-            $comment = Comment::findOrFail($commentId);
+        $vote = $this->voteService->store($request);
 
-            $validated = $request->validate([
-                'type' => ['required', 'string', 'in:upvote,downvote'],
-            ]);
-
-            $result = $this->voteService->voteOnComment($comment, $request->user(), $validated['type']);
-
-            $response = ApiResponse::success($result['data'], $result['message']);
-            return response()->json($response->toArray(), 200);
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            $response = ApiResponse::error('The requested comment does not exist.', 404);
-            return response()->json($response->toArray(), 404);
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            $response = ApiResponse::error($e->getMessage(), 422, $e->errors());
-            return response()->json($response->toArray(), 422);
-        } catch (\Exception $e) {
-            $response = ApiResponse::error($e->getMessage(), 500);
-            return response()->json($response->toArray(), 500);
+        if ($vote === null) {
+            return ApiResponseResource::success(
+                message: 'Vote removed successfully.',
+                data: null
+            )->toJsonResponse();
         }
-    }
 
+        $voteResource = new VoteResource($vote);
 
-    /**
-     * Vote on a review.
-     *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  int  $reviewId  The ID of the review
-     * @return \Illuminate\Http\JsonResponse
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException When review not found
-     * @throws \Illuminate\Validation\ValidationException When validation fails
-     * @throws \Exception When voting fails due to server error
-     */
-    public function voteOnReview(Request $request, int $reviewId): JsonResponse
-    {
-        try {
-            $review = Review::findOrFail($reviewId);
-            $user = $request->user();
-
-            $validated = $request->validate([
-                'type' => ['required', 'string', 'in:upvote,downvote'],
-            ]);
-
-            $result = $this->voteService->voteOnReview($review, $user, $validated['type']);
-
-            $response = ApiResponse::success($result['data'], $result['message']);
-            return response()->json($response->toArray(), 200);
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            $response = ApiResponse::error('The requested review does not exist.', 404);
-            return response()->json($response->toArray(), 404);
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            $response = ApiResponse::error($e->getMessage(), 422, $e->errors());
-            return response()->json($response->toArray(), 422);
-        } catch (\Exception $e) {
-            $response = ApiResponse::error($e->getMessage(), 500);
-            return response()->json($response->toArray(), 500);
-        }
+        return ApiResponseResource::success(
+            message: 'Vote saved successfully.',
+            data: $voteResource->toArray($request)
+        )->toJsonResponse();
     }
 }

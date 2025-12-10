@@ -5,13 +5,11 @@ namespace App\Http\Controllers;
 use App\Models\Protocol;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
-use App\Models\Review;
 use App\Services\ProtocolService;
-use App\DTOs\ApiResponse;
-use App\DTOs\ProtocolDTO;
-use App\DTOs\PaginationDTO;
-use App\DTOs\ProtocolStatsDTO;
+use App\Http\Resources\ApiResponseResource;
+use App\Http\Resources\ErrorResponseResource;
+use App\Http\Resources\ProtocolResource;
+use App\Http\Resources\PaginationResource;
 
 /**
  * Protocol Management Controller
@@ -37,22 +35,15 @@ use App\DTOs\ProtocolStatsDTO;
  * @see App\Services\ProtocolService
  * @see App\Models\Protocol
  * @see App\Models\Review
- * @see App\DTOs\ProtocolDTO
+ * @see App\Http\Resources\ProtocolResource
  */
 class ProtocolController extends Controller
-
 {
+    protected ProtocolService $protocolService;
 
-    /**
-     * Format rating value to standardized decimal precision.
-     *
-     * @param  float|null  $rating  Raw rating value from database
-     * @return float Formatted rating rounded to 2 decimal places
-     * @internal
-     */
-    private function formatRating($rating)
+    public function __construct(ProtocolService $protocolService)
     {
-        return round($rating, 2);
+        $this->protocolService = $protocolService;
     }
 
     /**
@@ -60,49 +51,19 @@ class ProtocolController extends Controller
      *
      * @param  \Illuminate\Http\Request  $request
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Exception When fetching protocols fails due to server error
      */
     public function index(Request $request): JsonResponse
     {
-        try {
-            $service = new ProtocolService();
+        $protocols = $this->protocolService->index($request);
 
-            // Add author filter support
-            $filters = $request->all();
+        $protocolResources = ProtocolResource::collection($protocols)->toArray($request);
+        $paginationResource = PaginationResource::fromPaginator($protocols);
 
-            // Handle 'current_user' special case for authenticated requests
-            if ($request->has('author') && $request->get('author') === 'current_user') {
-                if (!$request->user()) {
-                    return ApiResponse::error(
-                        message: 'Authentication required for current_user filter',
-                        statusCode: 401
-                    )->toJsonResponse();
-                }
-                $filters['author'] = $request->user()->name;
-            }
-
-            $protocols = $service->listProtocols($filters);
-
-            // Transform protocols to DTOs
-            $protocolDTOs = $protocols->getCollection()->map(function ($protocol) {
-                return ProtocolDTO::fromModel($protocol)->toArray();
-            })->toArray();
-
-            // Create pagination DTO
-            $paginationDTO = PaginationDTO::fromPaginator($protocols);
-
-            // Create typed response: ApiResponse<ProtocolDTO[]>
-            return ApiResponse::successWithPagination(
-                data: $protocolDTOs,
-                pagination: $paginationDTO->toArray(),
-                message: 'Protocols fetched successfully.'
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            return ApiResponse::error(
-                message: 'Failed to fetch protocols: ' . $e->getMessage(),
-                statusCode: 500
-            )->toJsonResponse();
-        }
+        return ApiResponseResource::successWithPagination(
+            data: $protocolResources,
+            pagination: $paginationResource->toArray($request),
+            message: 'Protocols fetched successfully.'
+        )->toJsonResponse();
     }
 
 
@@ -111,250 +72,112 @@ class ProtocolController extends Controller
      *
      * @param  \Illuminate\Http\Request  $request
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Exception When fetching protocols fails due to server error
      */
     public function filters(Request $request): JsonResponse
     {
-        try {
-            $protocols = Protocol::select('id', 'title')->get();
+        $protocols = Protocol::select('id', 'title')->get();
 
-            // Transform protocols to DTOs
-            return ApiResponse::success(
-                data: $protocols,
-                message: 'Protocols fetched successfully.'
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            return ApiResponse::error(
-                message: 'Failed to fetch protocols: ' . $e->getMessage(),
-                statusCode: 500
-            )->toJsonResponse();
-        }
+        return ApiResponseResource::success(
+            data: $protocols,
+            message: 'Protocols fetched successfully.'
+        )->toJsonResponse();
     }
 
 
     /**
      * Retrieve detailed information for a specific protocol.
      *
-     * @param  int  $id  The ID of the protocol to retrieve
+     * @param  string  $id  The ID of the protocol to retrieve
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException When protocol not found
-     * @throws \Exception When fetching protocol fails due to server error
      */
-    public function show(int $id): JsonResponse
+    public function show(Request $request, string $id): JsonResponse
     {
-        try {
-            $service = new ProtocolService();
-            $protocol = $service->getProtocol($id);
+        $protocol = $this->protocolService->show($id);
 
-            // Create typed response: ApiResponse<ProtocolDTO>
-            return ApiResponse::success(
-                data: ProtocolDTO::fromModel($protocol)->toArray(),
-                message: 'Protocol fetched successfully.'
-            )->toJsonResponse();
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return ApiResponse::error(
-                message: 'Protocol not found',
-                statusCode: 404,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            return ApiResponse::error(
-                message: 'Failed to fetch protocol: ' . $e->getMessage(),
-                statusCode: 500,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        }
+        return ApiResponseResource::success(
+            data: (new ProtocolResource($protocol))->toArray($request),
+            message: 'Protocol fetched successfully.'
+        )->toJsonResponse();
     }
 
     /**
      * Create a new research protocol.
      *
-     * @param  \Illuminate\Http\Request  $request
+     * @param  \App\Http\Requests\ProtocolRequest  $request
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Illuminate\Validation\ValidationException When validation fails
-     * @throws \Exception When protocol creation fails due to server error
      * @authenticated
      */
-    public function store(Request $request): JsonResponse
+    public function store(\App\Http\Requests\ProtocolRequest $request): JsonResponse
     {
-        try {
-            $request->validate([
-                'title' => ['required', 'string', 'max:255'],
-                'content' => ['required', 'string'],
-                'tags' => ['nullable', 'array'],
-            ]);
+        $protocol = $this->protocolService->store($request);
 
-            if (!Auth::user()) {
-                return ApiResponse::error(
-                    message: 'Unauthorized',
-                    statusCode: 401
-                )->toJsonResponse();
-            }
-
-            $service = new ProtocolService();
-            $protocol = $service->createProtocol($request->only(['title', 'content', 'tags']), Auth::user());
-
-
-
-            return ApiResponse::success(
-                data: ProtocolDTO::fromModel($protocol)->toArray(),
-                message: 'Protocol created successfully',
-                statusCode: 201
-            )->toJsonResponse();
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            return ApiResponse::error(
-                message: 'Validation failed',
-                statusCode: 422,
-                data: $e->errors()
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            return ApiResponse::error(
-                message: 'Failed to create protocol',
-                statusCode: 500,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        }
+        return ApiResponseResource::success(
+            data: (new ProtocolResource($protocol))->toArray($request),
+            message: 'Protocol created successfully',
+            statusCode: 201
+        )->toJsonResponse();
     }
 
     /**
      * Update an existing protocol.
      *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  \App\Models\Protocol  $protocol  The protocol instance to update
+     * @param  \App\Http\Requests\ProtocolRequest  $request
+     * @param  string  $id  The ID of the protocol to update
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Illuminate\Validation\ValidationException When validation fails
-     * @throws \Exception When protocol update fails due to server error
      * @authenticated
      */
-    public function update(Request $request, Protocol $protocol): JsonResponse
+    public function update(\App\Http\Requests\ProtocolRequest $request, string $id): JsonResponse
     {
-        try {
-            // Check if the authenticated user is the author
-            if ($protocol->author !== $request->user()->name) {
-                return response()->json([
-                    'status_code' => 403,
-                    'error' => 'Unauthorized',
-                    'message' => 'You can only update protocols that you created.',
-                ], 403);
-            }
+        $protocol = $this->protocolService->update($id, $request);
 
-            $request->validate([
-                'title' => ['sometimes', 'required', 'string', 'max:255'],
-                'content' => ['sometimes', 'required', 'string'],
-                'tags' => ['nullable', 'array'],
-            ]);
-
-            $protocol->fill($request->only(['title', 'content', 'tags']));
-            $protocol->save();
-
-            return ApiResponse::success(
-                data: ProtocolDTO::fromModel($protocol)->toArray(),
-                message: 'Protocol updated successfully.'
-            )->toJsonResponse();
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            return ApiResponse::error(
-                message: 'Validation failed',
-                statusCode: 422,
-                data: $e->errors()
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            return ApiResponse::error(
-                message: 'Failed to update protocol',
-                statusCode: 500,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        }
+        return ApiResponseResource::success(
+            data: (new ProtocolResource($protocol))->toArray($request),
+            message: 'Protocol updated successfully.'
+        )->toJsonResponse();
     }
 
     /**
      * Delete a protocol permanently.
      *
      * @param  \Illuminate\Http\Request  $request
-     * @param  int  $id  The ID of the protocol to delete
+     * @param  string  $id  The ID of the protocol to delete
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException When protocol not found
-     * @throws \Exception When protocol deletion fails due to server error
      * @authenticated
      */
-    public function destroy(Request $request, int $id): JsonResponse
+    public function destroy(Request $request, string $id): JsonResponse
     {
-        try {
-            $protocol = Protocol::findOrFail($id);
+        $this->protocolService->destroy($id);
 
-            // Check if the authenticated user is the author
-            if ($protocol->author !== $request->user()->name) {
-                return response()->json([
-                    'status_code' => 403,
-                    'error' => 'Unauthorized',
-                    'message' => 'You can only delete protocols that you created.',
-                ], 403);
-            }
-
-            $protocol->delete();
-
-            return ApiResponse::success(
-                message: 'Protocol deleted successfully.',
-                data: ProtocolDTO::fromModel($protocol)->toArray()
-            )->toJsonResponse();
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return ApiResponse::error(
-                message: 'Protocol not found',
-                statusCode: 404,
-                data: 'The requested protocol does not exist.'
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            return ApiResponse::error(
-                message: 'Failed to delete protocol',
-                statusCode: 500,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        }
+        return ApiResponseResource::success(
+            message: 'Protocol deleted successfully.',
+            data: null
+        )->toJsonResponse();
     }
 
     /**
      * Retrieve comprehensive statistics for a specific protocol.
      *
-     * @param  int  $id  The ID of the protocol to get statistics for
+     * @param  string  $id  The ID of the protocol to get statistics for
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException When protocol not found
-     * @throws \Exception When fetching statistics fails due to server error
      */
-    public function stats(int $id): JsonResponse
+    public function stats(string $id, Request $request): JsonResponse
     {
-        try {
-            $protocol = Protocol::findOrFail($id);
+        $stats = $this->protocolService->getProtocolStats($id);
 
-            $reviewsCount = $protocol->reviews()->count();
-            $threadsCount = $protocol->threads()->count();
-            $averageRating = $protocol->getAverageRatingAttribute();
-
-            $averageRating = $this->formatRating($averageRating);
-
-            $data = [
-                'protocol_id' => $protocol->getKey(),
-                'total_reviews' => $reviewsCount,
-                'total_threads' => $threadsCount,
-                'average_rating' => $averageRating,
-                'rating_distribution' => $this->getRatingDistribution($id),
-            ];
-
-            return ApiResponse::success(
-                message: 'Protocol stats fetched successfully.',
-                data: ProtocolStatsDTO::fromData($data)
-            )->toJsonResponse();
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return ApiResponse::error(
-                message: 'Protocol not found',
-                statusCode: 404,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            return ApiResponse::error(
-                message: 'Failed to fetch protocol stats',
-                statusCode: 500,
-                data: $e->getMessage()
-            )->toJsonResponse();
+        if (!$stats) {
+            return ErrorResponseResource::toJsonResponse(
+                ErrorResponseResource::fromMessage(
+                    message: 'Protocol not found',
+                    request: $request,
+                    statusCode: 404
+                )
+            );
         }
+
+        return ApiResponseResource::success(
+            message: 'Protocol stats fetched successfully.',
+            data: $stats
+        )->toJsonResponse();
     }
 
     /**
@@ -362,66 +185,28 @@ class ProtocolController extends Controller
      *
      * @param  \Illuminate\Http\Request  $request  HTTP request with optional pagination
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Exception When fetching featured protocols fails due to server error
      * @unauthenticated
      */
     public function featured(Request $request): JsonResponse
     {
-        try {
-            $perPage = $request->get('per_page', 3);
+        $perPage = $request->get('per_page', 3);
 
-            $query = Protocol::withCount(['threads', 'reviews'])
-                ->withAvg('reviews', 'rating');
+        $query = Protocol::withCount(['threads', 'reviews'])
+            ->withAvg('reviews', 'rating');
 
-            // Order by a combination of factors for "featured" quality
-            $protocols = $query->orderBy('reviews_avg_rating', 'desc')
-                ->orderBy('reviews_count', 'desc')
-                ->orderBy('threads_count', 'desc')
-                ->orderBy('created_at', 'desc')
-                ->paginate($perPage);
+        $protocols = $query->orderBy('reviews_avg_rating', 'desc')
+            ->orderBy('reviews_count', 'desc')
+            ->orderBy('threads_count', 'desc')
+            ->orderBy('created_at', 'desc')
+            ->paginate($perPage);
 
+        $protocolResources = ProtocolResource::collection($protocols)->toArray($request);
+        $pagination = PaginationResource::fromPaginator($protocols);
 
-            // Transform protocols to DTOs
-            $protocolDTOs = $protocols->getCollection()->map(function ($protocol) {
-                return ProtocolDTO::fromModel($protocol)->toArray();
-            })->toArray();
-
-            $pagination = PaginationDTO::fromPaginator($protocols);
-
-            return ApiResponse::successWithPagination(
-                data: $protocolDTOs,
-                pagination: $pagination->toArray(),
-                message: 'Featured protocols fetched successfully.'
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            return ApiResponse::error(
-                message: 'Failed to fetch featured protocols',
-                statusCode: 500,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        }
-    }
-
-    /**
-     * Calculate rating distribution for a specific protocol.
-     *
-     * @param  int  $protocolId  The ID of the protocol to analyze
-     * @return array Rating distribution with counts for each rating (1-5)
-     * @internal
-     */
-    private function getRatingDistribution(int $protocolId): array
-    {
-        $reviews = Review::where('protocol_id', $protocolId)
-            ->selectRaw('rating, COUNT(*) as count')
-            ->groupBy('rating')
-            ->orderBy('rating')
-            ->get();
-
-        $distribution = [];
-        for ($i = 1; $i <= 5; $i++) {
-            $distribution[$i] = $reviews->where('rating', $i)->first()?->count ?? 0;
-        }
-
-        return $distribution;
+        return ApiResponseResource::successWithPagination(
+            data: $protocolResources,
+            pagination: $pagination->toArray($request),
+            message: 'Featured protocols fetched successfully.'
+        )->toJsonResponse();
     }
 }

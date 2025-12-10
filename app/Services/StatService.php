@@ -6,17 +6,17 @@ use App\Models\User;
 use App\Models\Protocol;
 use App\Models\Thread;
 use App\Models\Review;
-use App\DTOs\StatDTO;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+use Throwable;
 
 /**
- * Statistics Managment Service
+ * Statistics Management Service
  *
  * Handles dashboard and user activity statistics for the platform.
  * Provides methods for retrieving overall counts and averages for protocols, users, threads, and reviews.
  *
  * Features:
- * - Dashboard statistics aggregation
+ * - Dashboard statistics aggregation using Eloquent
  * - User activity statistics (extensible)
  *
  * @package App\Services
@@ -28,42 +28,34 @@ use Illuminate\Support\Facades\DB;
  * @see App\Models\Protocol
  * @see App\Models\Thread
  * @see App\Models\Review
- * @see App\DTOs\StatDTO
  */
 class StatService
 {
     /**
      * Get dashboard statistics.
      *
-     * @return StatDTO
+     * @return array
+     * @throws ValidationException
      */
-    public function getDashboardStats(): StatDTO
+    public function index(): array
     {
-        // Use a single query to get all counts efficiently
-        $stats = DB::select("
-            SELECT 
-                (SELECT COUNT(*) FROM protocols) as active_protocols,
-                (SELECT COUNT(*) FROM users) as community_members,
-                (SELECT COUNT(*) FROM threads) as discussions,
-                (SELECT COALESCE(ROUND(AVG(rating), 1), 0) FROM reviews) as avg_rating
-        ")[0];
+        try {
+            return [
+                'active_protocols' => Protocol::count(),
+                'community_members' => User::count(),
+                'discussions' => Thread::count(),
+                'avg_rating' => round(Review::avg('rating') ?? 0, 1),
+            ];
+        } catch (Throwable $e) {
+            report($e);
 
-        return new StatDTO(
-            active_protocols: (int) $stats->active_protocols,
-            community_members: (int) $stats->community_members,
-            discussions: (int) $stats->discussions,
-            avg_rating: (float) $stats->avg_rating
-        );
-    }
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t load statistics due to a server error. Please try again.';
 
-    /**
-     * Calculate user activity stats (for future use).
-     *
-     * @return StatDTO
-     */
-    public function calculateUserActivityStats(): StatDTO
-    {
-        // This can be expanded for more complex user activity calculations
-        return $this->getDashboardStats();
+            throw ValidationException::withMessages([
+                'statistics' => [$message],
+            ]);
+        }
     }
 }
