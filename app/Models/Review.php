@@ -46,8 +46,8 @@ class Review extends Model
      * The accessors to append to the model's array form.
      */
     protected $appends = [
-        'helpful_count',
-        'not_helpful_count',
+        // Removed helpful_count, not_helpful_count to prevent N+1 queries
+        // These should be handled via withCount in services when needed
     ];
 
 

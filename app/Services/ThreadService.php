@@ -18,10 +18,13 @@ use Throwable;
  * Handles thread listing, retrieval, creation, updating, deletion, and statistics for the platform.
  * Provides methods for paginated thread queries, filtering, sorting, trending, and efficient vote/comment aggregation.
  *
+ * PERFORMANCE NOTE: Reverted to relationship-based queries for stability. JOIN optimization was attempted
+ * but caused pagination issues and didn't improve performance on AWS RDS Free Tier infrastructure.
+ *
  * Features:
  * - Paginated thread listing with filters and sorting using Eloquent relationships
  * - Thread creation, update, and deletion
- * - Efficient vote and comment aggregation
+ * - Efficient vote and comment aggregation via withCount
  * - Trending and protocol-specific thread queries
  * - Uses eager loading (with) for protocol relationship to avoid N+1 queries
  *
@@ -29,6 +32,7 @@ use Throwable;
  * @author Christian Bangay
  * @version 2.0.0
  * @since 2025-07-31
+ * @updated 2025-08-03 (Reverted JOIN optimization due to pagination issues)
  *
  * @see App\Models\Thread
  */
