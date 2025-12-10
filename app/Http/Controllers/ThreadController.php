@@ -2,15 +2,12 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Thread;
-use App\Models\Protocol;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use App\Services\ThreadService;
-use App\DTOs\ApiResponse;
-use App\DTOs\ThreadDTO;
-use App\DTOs\PaginationDTO;
-use Illuminate\Support\Facades\Auth;
+use App\Http\Resources\ApiResponseResource;
+use App\Http\Resources\ThreadResource;
+use App\Http\Resources\PaginationResource;
 
 /**
  * Thread Management Controller
@@ -34,7 +31,7 @@ use Illuminate\Support\Facades\Auth;
  * @see App\Services\ThreadService
  * @see App\Models\Thread
  * @see App\Models\Protocol
- * @see App\DTOs\ThreadDTO
+ * @see App\Http\Resources\ThreadResource
  */
 class ThreadController extends Controller
 {
@@ -50,319 +47,134 @@ class ThreadController extends Controller
      *
      * @param  \Illuminate\Http\Request  $request
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Exception When fetching threads fails due to server error
      */
     public function index(Request $request): JsonResponse
     {
-        try {
-            $service = new ThreadService();
+        $threads = $this->threadService->index($request);
 
-            // Add author filter support
-            $filters = $request->all();
+        $threadResources = ThreadResource::collection($threads)->toArray($request);
+        $paginationResource = PaginationResource::fromPaginator($threads);
 
-            // Handle 'current_user' special case for authenticated requests
-            if ($request->has('author') && $request->get('author') === 'current_user') {
-                if (!$request->user()) {
-                    return ApiResponse::error(
-                        message: 'Authentication required for current_user filter',
-                        statusCode: 401
-                    )->toJsonResponse();
-                }
-                $filters['author'] = $request->user()->name;
-            }
-
-            $threads = $service->listThreads($filters);
-
-            // Transform threads to DTOs efficiently
-            $threadDTOs = [];
-            foreach ($threads->items() as $thread) {
-                $threadDTOs[] = ThreadDTO::fromModel($thread)->toArray();
-            }
-
-            $paginationDTO = PaginationDTO::fromPaginator($threads);
-
-            return ApiResponse::successWithPagination(
-                data: $threadDTOs,
-                pagination: $paginationDTO->toArray(),
-                message: 'Threads fetched successfully.'
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            return ApiResponse::error(
-                message: 'Failed to fetch threads',
-                statusCode: 500,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        }
+        return ApiResponseResource::successWithPagination(
+            data: $threadResources,
+            pagination: $paginationResource->toArray($request),
+            message: 'Threads fetched successfully.'
+        )->toJsonResponse();
     }
 
     /**
      * Display the specified thread.
      *
-     * @param  int  $id  The ID of the thread
+     * @param  \Illuminate\Http\Request  $request
+     * @param  string  $id  The ID of the thread
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException When thread not found
-     * @throws \Exception When fetching thread fails due to server error
      */
-    public function show(int $id): JsonResponse
+    public function show(Request $request, string $id): JsonResponse
     {
-        try {
-            $service = new ThreadService();
-            $thread = $service->getThread($id);
+        $thread = $this->threadService->show($id, $request);
 
-            $threadDTOs = ThreadDTO::fromModel($thread)->toArray();
-
-            return ApiResponse::success(
-                data: $threadDTOs,
-                message: 'Thread fetched successfully.'
-            )->toJsonResponse();
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return ApiResponse::error(
-                message: 'Thread not found',
-                statusCode: 404,
-                data: 'The requested thread does not exist.'
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            return ApiResponse::error(
-                message: 'Failed to fetch thread',
-                statusCode: 500,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        }
+        return ApiResponseResource::success(
+            data: (new ThreadResource($thread))->toArray($request),
+            message: 'Thread fetched successfully.'
+        )->toJsonResponse();
     }
 
     /**
      * Get threads by protocol.
      *
      * @param  \Illuminate\Http\Request  $request
-     * @param  int  $protocolId  The ID of the protocol
+     * @param  string  $protocolId  The ID of the protocol
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException When protocol not found
-     * @throws \Exception When fetching threads fails due to server error
      */
-    public function byProtocol(Request $request, int $protocolId): JsonResponse
+    public function byProtocol(Request $request, string $protocolId): JsonResponse
     {
-        try {
-            $perPage = $request->get('per_page', 15);
+        $threads = $this->threadService->getThreadsByProtocol($protocolId, $request);
 
-            $threads = $this->threadService->getThreadsByProtocol($protocolId, [
-                'per_page' => $perPage
-            ]);
+        $threadResources = ThreadResource::collection($threads)->toArray($request);
+        $paginationResource = PaginationResource::fromPaginator($threads);
 
-            // Transform threads to DTOs efficiently
-            $threadDTOs = [];
-            foreach ($threads->items() as $thread) {
-                $threadDTOs[] = ThreadDTO::fromModel($thread)->toArray();
-            }
-
-            $paginationDTO = PaginationDTO::fromPaginator($threads);
-
-            return ApiResponse::successWithPagination(
-                data: $threadDTOs,
-                pagination: $paginationDTO->toArray(),
-                message: 'Threads fetched successfully.'
-            )->toJsonResponse();
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return ApiResponse::error(
-                message: 'Protocol not found',
-                statusCode: 404
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            return ApiResponse::error(
-                message: 'Failed to fetch threads',
-                statusCode: 500
-            )->toJsonResponse();
-        }
+        return ApiResponseResource::successWithPagination(
+            data: $threadResources,
+            pagination: $paginationResource->toArray($request),
+            message: 'Threads fetched successfully.'
+        )->toJsonResponse();
     }
 
     /**
      * Store a newly created thread.
      *
-     * @param  \Illuminate\Http\Request  $request
+     * @param  \App\Http\Requests\ThreadRequest  $request
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Illuminate\Validation\ValidationException When validation fails
-     * @throws \Exception When thread creation fails due to server error
      */
-    public function store(Request $request): JsonResponse
+    public function store(\App\Http\Requests\ThreadRequest $request): JsonResponse
     {
-        try {
-            $request->validate([
-                'protocol_id' => ['required', 'exists:protocols,id'],
-                'title' => ['required', 'string', 'max:255'],
-                'body' => ['required', 'string'],
-            ]);
+        $thread = $this->threadService->store($request);
 
-            if (!Auth::user()) {
-                return ApiResponse::error(
-                    message: 'Unauthorized',
-                    statusCode: 401
-                )->toJsonResponse();
-            }
-
-            $service = new ThreadService();
-            $thread = $service->createThread($request->all(), Auth::user());
-
-            return ApiResponse::success(
-                data: ThreadDTO::fromModel($thread)->toArray(),
-                message: 'Thread created successfully.',
-                statusCode: 201
-            )->toJsonResponse();
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            return ApiResponse::error(
-                message: 'Validation failed',
-                statusCode: 422,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            return ApiResponse::error(
-                message: 'Failed to create thread',
-                statusCode: 500,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        }
+        return ApiResponseResource::success(
+            data: (new ThreadResource($thread))->toArray($request),
+            message: 'Thread created successfully.',
+            statusCode: 201
+        )->toJsonResponse();
     }
 
     /**
      * Update the specified thread.
      *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  Thread  $thread  The thread instance to update
+     * @param  \App\Http\Requests\ThreadRequest  $request
+     * @param  string  $id  The ID of the thread to update
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException When thread not found
-     * @throws \Illuminate\Validation\ValidationException When validation fails
-     * @throws \Exception When thread update fails due to server error
      */
-    public function update(Request $request, Thread $thread): JsonResponse
+    public function update(\App\Http\Requests\ThreadRequest $request, string $id): JsonResponse
     {
-        try {
-            // Check if the authenticated user is the author
-            if ($thread->author !== $request->user()->name) {
-                return response()->json([
-                    'status_code' => 403,
-                    'error' => 'Unauthorized',
-                    'message' => 'You can only update threads that you created.',
-                ], 403);
-            }
+        $thread = $this->threadService->update($id, $request);
 
-            $request->validate([
-                'protocol_id' => ['sometimes', 'required', 'exists:protocols,id'],
-                'title' => ['sometimes', 'required', 'string', 'max:255'],
-                'body' => ['sometimes', 'required', 'string'],
-            ]);
-
-            $service = new ThreadService();
-            $thread = $service->updateThread($thread->id, $request->only(['protocol_id', 'title', 'body']));
-
-            return ApiResponse::success(
-                data: ThreadDTO::fromModel($thread)->toArray(),
-                message: 'Thread updated successfully.'
-            )->toJsonResponse();
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return ApiResponse::error(
-                message: 'Thread not found',
-                statusCode: 404,
-                data: 'The requested thread does not exist.'
-            )->toJsonResponse();
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            return ApiResponse::error(
-                message: 'Validation failed',
-                statusCode: 422,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            return ApiResponse::error(
-                message: 'Failed to update thread',
-                statusCode: 500,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        }
+        return ApiResponseResource::success(
+            data: (new ThreadResource($thread))->toArray($request),
+            message: 'Thread updated successfully.'
+        )->toJsonResponse();
     }
 
     /**
      * Remove the specified thread.
      *
      * @param  \Illuminate\Http\Request  $request
-     * @param  int  $id  The ID of the thread
+     * @param  string  $id  The ID of the thread
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException When thread not found
-     * @throws \Exception When thread deletion fails due to server error
      */
-    public function destroy(Request $request, int $id): JsonResponse
+    public function destroy(Request $request, string $id): JsonResponse
     {
-        try {
-            $thread = Thread::findOrFail($id);
+        $this->threadService->destroy($id);
 
-            // Check if the authenticated user is the author
-            if ($thread->author !== $request->user()->name) {
-                return response()->json([
-                    'status_code' => 403,
-                    'error' => 'Unauthorized',
-                    'message' => 'You can only delete threads that you created.',
-                ], 403);
-            }
-
-            $service = new ThreadService();
-            $thread = $service->deleteThread($id);
-
-            return ApiResponse::success(
-                data: ThreadDTO::fromModel($thread)->toArray(),
-                message: 'Thread deleted successfully.'
-            )->toJsonResponse();
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return ApiResponse::error(
-                message: 'Thread not found',
-                statusCode: 404,
-                data: 'The requested thread does not exist.'
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            return ApiResponse::error(
-                message: 'Failed to delete thread',
-                statusCode: 500,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        }
+        return ApiResponseResource::success(
+            message: 'Thread deleted successfully.',
+            data: null
+        )->toJsonResponse();
     }
 
     /**
      * Get thread statistics.
      *
-     * @param  int  $id  The ID of the thread
+     * @param  string  $id  The ID of the thread
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException When thread not found
-     * @throws \Exception When fetching thread statistics fails due to server error
      */
-    public function stats(int $id): JsonResponse
+    public function stats(string $id): JsonResponse
     {
-        try {
-            $service = new ThreadService();
-            $thread = $service->getThreadStatistics($id);
+        $thread = $this->threadService->getThreadStatistics($id);
 
-            $threadStats = [
-                'thread_id' => $thread->id,
-                'total_comments' => $thread->comments()->count(),
-                'total_votes' => $thread->votes()->count(),
-                'upvotes' => $thread->getUpvotesAttribute(),
-                'downvotes' => $thread->getDownvotesAttribute(),
-                'vote_score' => $thread->getVoteScoreAttribute(),
-                'engagement_score' => $thread->comments()->count() + $thread->votes()->count(),
-            ];
+        $threadStats = [
+            'thread_id' => $thread->id,
+            'total_comments' => $thread->comments_count ?? 0,
+            'total_votes' => $thread->votes_count ?? 0,
+            'upvotes' => $thread->upvotes ?? 0,
+            'downvotes' => $thread->downvotes ?? 0,
+            'vote_score' => $thread->vote_score ?? 0,
+            'engagement_score' => ($thread->comments_count ?? 0) + ($thread->votes_count ?? 0),
+        ];
 
-            return ApiResponse::success(
-                $threadStats,
-                message: 'Thread stats fetched successfully.'
-            )->toJsonResponse();
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return ApiResponse::error(
-                message: 'Thread not found',
-                statusCode: 404,
-                data: 'The requested thread does not exist.'
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            return ApiResponse::error(
-                message: 'Failed to fetch thread stats',
-                statusCode: 500,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        }
+        return ApiResponseResource::success(
+            $threadStats,
+            message: 'Thread stats fetched successfully.'
+        )->toJsonResponse();
     }
 
     /**
@@ -370,33 +182,18 @@ class ThreadController extends Controller
      *
      * @param  \Illuminate\Http\Request  $request
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Exception When fetching trending threads fails due to server error
      */
     public function trending(Request $request): JsonResponse
     {
-        try {
-            $service = new ThreadService();
-            $threads = $service->getTrendingThreads($request->all());
+        $threads = $this->threadService->getTrendingThreads($request);
 
-            // Transform threads to DTOs efficiently
-            $threadDTOs = [];
-            foreach ($threads->items() as $thread) {
-                $threadDTOs[] = ThreadDTO::fromModel($thread)->toArray();
-            }
+        $threadResources = ThreadResource::collection($threads)->toArray($request);
+        $paginationResource = PaginationResource::fromPaginator($threads);
 
-            $paginationDTO = PaginationDTO::fromPaginator($threads);
-
-            return ApiResponse::successWithPagination(
-                data: $threadDTOs,
-                pagination: $paginationDTO->toArray(),
-                message: 'Trending threads fetched successfully.',
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            return ApiResponse::error(
-                message: 'Failed to fetch trending threads',
-                statusCode: 500,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        }
+        return ApiResponseResource::successWithPagination(
+            data: $threadResources,
+            pagination: $paginationResource->toArray($request),
+            message: 'Trending threads fetched successfully.',
+        )->toJsonResponse();
     }
 }

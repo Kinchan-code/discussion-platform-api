@@ -12,13 +12,16 @@ return new class extends Migration
     public function up()
     {
         Schema::create('protocols', function (Blueprint $table) {
-            $table->id();
+            $table->uuid('id')->primary();
             $table->string('title');
             $table->text('content');
             $table->json('tags')->nullable();
             $table->string('author');
             $table->float('rating')->default(0);
             $table->timestamps();
+
+            $table->index('author', 'idx_protocols_author');
+            $table->index('created_at', 'idx_protocols_created_at');
         });
     }
     

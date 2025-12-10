@@ -4,21 +4,23 @@ namespace App\Services;
 
 use App\Models\Review;
 use App\Models\Protocol;
-use App\Models\User;
-use App\DTOs\ReviewDTO;
+use App\Http\Requests\ReviewRequest;
 use Illuminate\Http\Request;
-use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\ValidationException;
+use Throwable;
 
 /**
  * Review Management Service
  *
- * Handles review listing, creation, deletion, retrieval, and smart highlighting for protocols.
- * Provides methods for paginated review queries, filtering, and optimized highlighting logic.
+ * Handles review listing, creation, deletion, retrieval, and updates for protocols.
+ * Provides methods for paginated review queries and filtering.
  *
  * Features:
- * - Paginated review listing with filters and highlighting
- * - Review creation and deletion with authorization
- * - Efficient review retrieval and highlight location calculation
+ * - Paginated review listing with filters
+ * - Review creation, update, and deletion with authorization
+ * - Optimized queries using Eloquent relationships
  *
  * @package App\Services
  * @author Christian Bangay
@@ -28,265 +30,220 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
  * @see App\Models\Review
  * @see App\Models\Protocol
  * @see App\Models\User
- * @see App\DTOs\ReviewDTO
+ * @see App\Http\Resources\ReviewResource
  */
 
 class ReviewService
 {
     /**
-     * Get paginated reviews for a protocol with filtering and smart highlighting support.
+     * Get paginated reviews for a protocol with filtering.
      *
-     * @param Protocol $protocol
+     * @param string $protocolId
      * @param Request $request
-     * @return LengthAwarePaginator
+     * @return \Illuminate\Contracts\Pagination\LengthAwarePaginator
+     * @throws ValidationException
      */
-    public function getProtocolReviews(Protocol $protocol, Request $request): LengthAwarePaginator
+    public function index(string $protocolId, Request $request): \Illuminate\Contracts\Pagination\LengthAwarePaginator
     {
-        $perPage = $request->get('per_page', 10);
-        $author = $request->get('author');
-        $highlightReviewId = $request->get('highlight_review');
+        try {
+            $protocol = Protocol::findOrFail($protocolId);
+            $perPage = min($request->get('per_page', 10), 50);
+            $author = $request->get('author');
 
-        // Use the protocol ID directly to leverage database indexes
-        $reviewsQuery = Review::where('protocol_id', $protocol->id)
-            ->latest('created_at');
+            $query = $protocol->reviews()
+                ->with(['protocol'])
+                ->latest('created_at');
 
-        // Add author filter support
-        if ($author) {
-            // Handle 'current_user' special case
-            if ($author === 'current_user') {
-                if (!$request->user()) {
-                    throw new \Exception('Authentication required for current_user filter.');
+            // Add author filter support
+            if ($author) {
+                // Handle 'current_user' special case
+                if ($author === 'current_user') {
+                    if (!Auth::check()) {
+                        throw new \Exception('Authentication required for current_user filter.');
+                    }
+                    $author = Auth::user()->name;
                 }
-                $author = $request->user()->name;
+
+                $query->where('author', $author);
             }
 
-            $reviewsQuery->where('author', $author);
+            // Load user's vote if authenticated, otherwise load empty collection
+            $query->with(['votes' => function ($q) {
+                if (Auth::guard('sanctum')->check()) {
+                    $q->where('user_id', Auth::guard('sanctum')->id());
+                } else {
+                    $q->whereRaw('1 = 0'); // Load nothing for unauthenticated users
+                }
+            }]);
+
+            return $query->paginate($perPage);
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t load reviews due to a server error. Please try again.';
+
+            throw ValidationException::withMessages([
+                'reviews' => [$message],
+            ]);
         }
-
-        // Handle smart highlighting logic
-        if ($highlightReviewId) {
-            return $this->getReviewsWithSmartHighlighting($reviewsQuery, $request, $perPage, $highlightReviewId);
-        }
-
-        // Standard pagination when no highlighting
-        $reviews = $reviewsQuery->paginate($perPage);
-
-        // Transform each review to DTO
-        $reviews->getCollection()->transform(function ($review) use ($highlightReviewId) {
-            $reviewDto = ReviewDTO::fromModel($review);
-            $reviewArray = $reviewDto->toArray();
-            $reviewArray['is_highlighted'] = false; // No highlighting in standard pagination
-            return $reviewArray;
-        });
-
-        return $reviews;
     }
 
     /**
      * Create a new review for a protocol.
      *
-     * @param Protocol $protocol
-     * @param User $user
-     * @param array $data
-     * @return ReviewDTO
+     * @param string $protocolId
+     * @param ReviewRequest $request
+     * @return Review
+     * @throws ValidationException
      */
-    public function createReview(Protocol $protocol, User $user, array $data): ReviewDTO
+    public function store(string $protocolId, ReviewRequest $request): Review
     {
-        $review = $protocol->reviews()->create([
-            'rating' => $data['rating'],
-            'feedback' => $data['feedback'] ?? null,
-            'author' => $user->name,
-        ]);
+        try {
+            return DB::transaction(function () use ($protocolId, $request) {
+                $protocol = Protocol::findOrFail($protocolId);
+                $user = Auth::user();
+                $data = $request->validated();
 
-        return ReviewDTO::fromModel($review);
+                $review = $protocol->reviews()->create([
+                    'rating' => $data['rating'],
+                    'feedback' => $data['feedback'] ?? null,
+                    'author' => $user->name,
+                ]);
+
+                $review->load(['protocol']);
+
+                return $review;
+            });
+        } catch (ValidationException $e) {
+            throw $e;
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t create the review due to a server error. Please try again.';
+
+            throw ValidationException::withMessages([
+                'review' => [$message],
+            ]);
+        }
     }
 
     /**
-     * Update an existing review if user is authorized.
+     * Update an existing review.
      *
-     * @param Review $review
-     * @param User $user
-     * @param array $data
-     * @return ReviewDTO
-     * @throws \Exception When user is not the author
+     * @param string $id
+     * @param ReviewRequest $request
+     * @return Review
+     * @throws ValidationException
      */
-    public function updateReview(Review $review, User $user, array $data): ReviewDTO
+    public function update(string $id, ReviewRequest $request): Review
     {
-        // Check if the authenticated user is the author
-        if ($review->author !== $user->name) {
-            throw new \Exception('You can only update reviews that you created.');
+        try {
+            return DB::transaction(function () use ($id, $request) {
+                $review = Review::findOrFail($id);
+                $user = Auth::user();
+
+                if ($review->author !== $user->name) {
+                    throw new \Exception('You can only update reviews that you created.');
+                }
+
+                $data = $request->validated();
+
+                $review->fill([
+                    'rating' => $data['rating'] ?? $review->rating,
+                    'feedback' => $data['feedback'] ?? $review->feedback,
+                ]);
+                $review->save();
+
+                $review->load(['protocol']);
+
+                return $review;
+            });
+        } catch (ValidationException $e) {
+            throw $e;
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t update the review due to a server error. Please try again.';
+
+            throw ValidationException::withMessages([
+                'review' => [$message],
+            ]);
         }
-
-        // Only allow updating certain fields
-        $fieldsToUpdate = [
-            'rating' => $data['rating'] ?? $review->rating,
-            'feedback' => $data['feedback'] ?? $review->feedback,
-        ];
-        $review->fill($fieldsToUpdate);
-
-        // Only save if something actually changed
-        if ($review->isDirty()) {
-            $review->save();
-        }
-
-        return ReviewDTO::fromModel($review);
-    }
-
-    /**
-     * Delete a review if user is authorized.
-     *
-     * @param Review $review
-     * @param User $user
-     * @return void
-     * @throws \Exception When user is not the author
-     */
-    public function deleteReview(Review $review, User $user): void
-    {
-        // Check if the authenticated user is the author
-        if ($review->author !== $user->name) {
-            throw new \Exception('You can only delete reviews that you created.');
-        }
-
-        $review->delete();
     }
 
     /**
      * Get a single review by ID.
      *
-     * @param int $id
-     * @return Review
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException
-     */
-    public function getReview(int $id): Review
-    {
-        return Review::findOrFail($id);
-    }
-
-    /**
-     * Get reviews with smart highlighting that ensures highlighted items are visible.
-     *
-     * @param $reviewsQuery
+     * @param string $id
      * @param Request $request
-     * @param int $perPage
-     * @param $highlightReviewId
-     * @return LengthAwarePaginator
+     * @return Review
+     * @throws ValidationException
      */
-    private function getReviewsWithSmartHighlighting($reviewsQuery, Request $request, int $perPage, $highlightReviewId): LengthAwarePaginator
+    public function show(string $id, Request $request): Review
     {
-        $currentPage = $request->get('page', 1);
+        try {
+            $query = Review::with(['protocol']);
 
-        $highlightedReview = $this->findHighlightedReview($reviewsQuery, $highlightReviewId);
+            // Load user's vote if authenticated, otherwise load empty collection
+            $query->with(['votes' => function ($q) {
+                if (Auth::guard('sanctum')->check()) {
+                    $q->where('user_id', Auth::guard('sanctum')->id());
+                } else {
+                    $q->whereRaw('1 = 0'); // Load nothing for unauthenticated users
+                }
+            }]);
 
-        if (!$highlightedReview) {
-            return $this->executePaginationWithTransform($reviewsQuery, $perPage, $highlightReviewId, false);
+            return $query->findOrFail($id);
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t load the review due to a server error. Please try again.';
+
+            throw ValidationException::withMessages([
+                'review' => [$message],
+            ]);
         }
-
-        $highlightLocation = $this->calculateReviewHighlightLocation($reviewsQuery, $highlightedReview, $perPage);
-        $naturalPage = $highlightLocation['natural_page'] ?? 1;
-
-        if ($naturalPage == $currentPage) {
-            return $this->executePaginationWithTransform($reviewsQuery, $perPage, $highlightReviewId, true);
-        }
-
-        $reviews = $reviewsQuery->paginate($perPage);
-
-        $transformedItems = [];
-        foreach ($reviews->items() as $review) {
-            $reviewDto = ReviewDTO::fromModel($review);
-            $reviewArray = $reviewDto->toArray();
-            $reviewArray['is_highlighted'] = false;
-            $transformedItems[] = $reviewArray;
-        }
-
-        $highlightedDto = ReviewDTO::fromModel($highlightedReview);
-        $highlightedArray = $highlightedDto->toArray();
-        $highlightedArray['is_highlighted'] = true;
-
-        $allItems = array_merge([$highlightedArray], $transformedItems);
-
-        return new \Illuminate\Pagination\LengthAwarePaginator(
-            $allItems,
-            $reviews->total(),
-            $reviews->perPage(),
-            $reviews->currentPage(),
-            [
-                'path' => $request->url(),
-                'pageName' => 'page',
-                'highlight_info' => [
-                    'found_on_different_page' => true,
-                    'natural_location' => $highlightLocation,
-                    'message' => 'Highlighted review included from different page for visibility'
-                ]
-            ]
-        );
     }
 
     /**
-     * Execute pagination with efficient transformation.
+     * Delete a review.
      *
-     * @param $reviewsQuery
-     * @param int $perPage
-     * @param $highlightReviewId
-     * @param bool $hasHighlight
-     * @return LengthAwarePaginator
+     * @param string $id
+     * @return void
+     * @throws ValidationException
      */
-    private function executePaginationWithTransform($reviewsQuery, int $perPage, $highlightReviewId, bool $hasHighlight): LengthAwarePaginator
+    public function destroy(string $id): void
     {
-        $reviews = $reviewsQuery->paginate($perPage);
+        try {
+            DB::transaction(function () use ($id) {
+                $review = Review::findOrFail($id);
+                $user = Auth::user();
 
-        // Single-pass transformation for better performance
-        $reviews->getCollection()->transform(function ($review) use ($highlightReviewId, $hasHighlight) {
-            $reviewDto = ReviewDTO::fromModel($review);
-            $reviewArray = $reviewDto->toArray();
-            $reviewArray['is_highlighted'] = $hasHighlight && $review->id == $highlightReviewId;
-            return $reviewArray;
-        });
+                if ($review->author !== $user->name) {
+                    throw new \Exception('You can only delete reviews that you created.');
+                }
 
-        return $reviews;
+                $review->delete();
+            });
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t delete the review due to a server error. Please try again.';
+
+            throw ValidationException::withMessages([
+                'review' => [$message],
+            ]);
+        }
     }
 
-    /**
-     * Find highlighted review by ID within the query scope.
-     *
-     * @param $baseQuery
-     * @param $reviewId
-     * @return mixed
-     */
-    private function findHighlightedReview($baseQuery, $reviewId)
-    {
-        // Clone the base query to maintain filters and sorting
-        $query = clone $baseQuery;
-
-        // Only select fields needed for the review (optimization)
-        return $query->select(['id', 'protocol_id', 'rating', 'feedback', 'author', 'created_at', 'updated_at'])
-            ->where('id', $reviewId)
-            ->first();
-    }
-
-    /**
-     * Calculate where the highlighted review would naturally appear.
-     *
-     * @param $reviewsQuery
-     * @param $highlightedItem
-     * @param int $perPage
-     * @return array|null
-     */
-    private function calculateReviewHighlightLocation($reviewsQuery, $highlightedItem, int $perPage): ?array
-    {
-        if (!$highlightedItem) return null;
-
-        // Use more efficient counting query - only count, don't fetch data
-        $query = clone $reviewsQuery;
-        $countBefore = $query->where('created_at', '>', $highlightedItem->created_at)
-            ->count();
-
-        $naturalPage = intval(ceil(($countBefore + 1) / $perPage));
-        $positionInPage = ($countBefore % $perPage) + 1;
-
-        return [
-            'natural_page' => $naturalPage,
-            'position_in_page' => $positionInPage,
-            'url_to_natural_location' => "?page={$naturalPage}",
-        ];
-    }
 }

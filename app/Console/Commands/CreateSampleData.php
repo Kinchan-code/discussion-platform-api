@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Protocol;
+use App\Models\Tag;
 use App\Models\Thread;
 use Illuminate\Console\Command;
 
@@ -34,10 +35,16 @@ class CreateSampleData extends Command
                 $protocol = Protocol::create([
                     'title' => "Sample Protocol {$i}",
                     'content' => "This is the content for sample protocol {$i}. It contains information about medical procedures and guidelines for healthcare professionals. The protocol covers various aspects including preparation, execution, and follow-up procedures.",
-                    'tags' => ['sample', 'protocol', 'medical', 'healthcare'],
                     'author' => "Dr. Sample Author {$i}",
                     'rating' => rand(30, 50) / 10, // Random rating between 3.0 and 5.0
                 ]);
+
+                // Sync tags
+                $tagNames = ['sample', 'protocol', 'medical', 'healthcare'];
+                $tagIds = collect($tagNames)->map(function ($tagName) {
+                    return Tag::firstOrCreate(['tag' => $tagName])->id;
+                })->toArray();
+                $protocol->tags()->sync($tagIds);
                 
                 $this->line("Created Protocol: {$protocol->title}");
                 

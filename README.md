@@ -125,7 +125,6 @@ A robust Laravel REST API for a community-driven platform where users can share 
 **Tags & Analytics**
 
 -   `GET /api/tags/popular` — Popular tags
--   `POST /api/tags/reindex` — Rebuild search index (auth required)
 -   `GET /api/stats/dashboard` — Platform statistics
 
 ---

@@ -4,7 +4,13 @@ namespace App\Services;
 
 use App\Models\Protocol;
 use App\Models\Review;
-use Illuminate\Pagination\LengthAwarePaginator;
+use App\Models\Tag;
+use App\Http\Requests\ProtocolRequest;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+use Throwable;
 
 /**
  * Protocol Management Service
@@ -30,94 +36,258 @@ class ProtocolService
     /**
      * Get a paginated list of protocols with counts and optional filters/sorting.
      *
-     * @param array $params
-     * @return LengthAwarePaginator
+     * @param Request $request
+     * @return \Illuminate\Contracts\Pagination\LengthAwarePaginator
+     * @throws ValidationException
      */
-    public function listProtocols($params): LengthAwarePaginator
+    public function index(Request $request): \Illuminate\Contracts\Pagination\LengthAwarePaginator
     {
-        $perPage = $params['per_page'] ?? 15;
-        $sort = $params['sort'] ?? 'recent';
-        $tags = $params['tags'] ?? null;
-        $author = $params['author'] ?? null;
+        try {
+            $perPage = $request->input('per_page', 15);
+            $sort = $request->input('sort', 'recent');
+            $tags = $request->input('tags');
+            $author = $request->input('author');
 
-        $query = Protocol::withCount(['reviews', 'threads']);
-
-        // Author filtering
-        if ($author) {
-            $query->where('author', $author);
-        }
-
-        // Tag filtering
-        if ($tags) {
-            if (is_string($tags)) {
-                $tags = explode(',', $tags);
-            }
-            $tags = array_map('trim', $tags);
-            $query->where(function ($q) use ($tags) {
-                foreach ($tags as $tag) {
-                    $q->whereJsonContains('tags', $tag);
+            // Handle 'current_user' special case for authenticated requests
+            if ($author === 'current_user') {
+                if (!$request->user()) {
+                    throw new \Exception('Authentication required for current_user filter.');
                 }
+                $author = $request->user()->name;
+            }
+
+            $query = Protocol::with(['tags'])
+                ->withCount(['reviews', 'threads'])
+                ->withAvg('reviews', 'rating');
+
+            // Author filtering
+            if ($author) {
+                $query->where('author', $author);
+            }
+
+            // Tag filtering
+            if ($tags) {
+                if (is_string($tags)) {
+                    $tags = explode(',', $tags);
+                }
+                $tags = array_map('trim', $tags);
+                $query->whereHas('tags', function ($q) use ($tags) {
+                    $q->whereIn('tag', $tags);
+                });
+            }
+
+            // Sorting
+            switch ($sort) {
+                case 'popular':
+                    $query->orderBy('threads_count', 'desc')
+                        ->orderBy('reviews_count', 'desc')
+                        ->orderBy('created_at', 'desc');
+                    break;
+                case 'rating':
+                    $query->withAvg('reviews', 'rating')
+                        ->orderBy('reviews_avg_rating', 'desc')
+                        ->orderBy('reviews_count', 'desc');
+                    break;
+                case 'reviews':
+                    $query->orderBy('reviews_count', 'desc')
+                        ->orderBy('created_at', 'desc');
+                    break;
+                case 'recent':
+                default:
+                    $query->orderBy('created_at', 'desc');
+                    break;
+            }
+
+            $protocols = $query->paginate($perPage);
+            
+            // Fix for eager loading issue: fetch tags with protocols_count for each protocol
+            // Note: setRelation works but property access doesn't, so we use getRelationValue in resources
+            $protocols->getCollection()->each(function ($protocol) {
+                $tags = $protocol->tags()->withCount('protocols')->get();
+                $protocol->setRelation('tags', $tags);
             });
+            
+            return $protocols;
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t load protocols due to a server error. Please try again.';
+
+            throw ValidationException::withMessages([
+                'protocols' => [$message],
+            ]);
         }
-
-        // Sorting
-        switch ($sort) {
-            case 'popular':
-                $query->orderBy('threads_count', 'desc')
-                    ->orderBy('reviews_count', 'desc')
-                    ->orderBy('created_at', 'desc');
-                break;
-            case 'rating':
-                $query->withAvg('reviews', 'rating')
-                    ->orderBy('reviews_avg_rating', 'desc')
-                    ->orderBy('reviews_count', 'desc');
-                break;
-            case 'reviews':
-                $query->orderBy('reviews_count', 'desc')
-                    ->orderBy('created_at', 'desc');
-                break;
-            case 'recent':
-            default:
-                $query->orderBy('created_at', 'desc');
-                break;
-        }
-
-
-        return $query->paginate($perPage);
     }
 
     /**
      * Get a single protocol with counts.
      *
-     * @param mixed $id
+     * @param string $id
      * @return Protocol
+     * @throws ValidationException
      */
-    public function getProtocol($id): Protocol
+    public function show(string $id): Protocol
     {
-        return Protocol::withCount(['reviews', 'threads'])->findOrFail($id);
+        try {
+            $protocol = Protocol::withCount(['reviews', 'threads'])
+                ->withAvg('reviews', 'rating')
+                ->findOrFail($id);
+            
+            // Fetch tags with protocols_count due to eager loading issue with belongsToMany
+            $tags = $protocol->tags()->withCount('protocols')->get();
+            $protocol->setRelation('tags', $tags);
+            
+            return $protocol;
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t load the protocol due to a server error. Please try again.';
+
+            throw ValidationException::withMessages([
+                'protocol' => [$message],
+            ]);
+        }
     }
 
     /**
      * Create a new protocol.
      *
-     * @param array $data Protocol data (title, content, tags)
-     * @param mixed $user User creating the protocol
+     * @param ProtocolRequest $request
      * @return Protocol
+     * @throws ValidationException
      */
-    public function createProtocol(array $data, $user = null): Protocol
+    public function store(ProtocolRequest $request): Protocol
     {
-        $protocol = Protocol::create([
-            'title' => $data['title'],
-            'content' => $data['content'],
-            'tags' => $data['tags'] ?? [],
-            'author' => optional($user)->name ?? 'Anonymous',
-        ]);
+        try {
+            return DB::transaction(function () use ($request) {
+                $data = $request->validated();
+                $user = $request->user();
 
-        // Load count relationships for search indexing
-        $protocol->load(['reviews', 'threads']);
-        $protocol->loadCount(['reviews', 'threads']);
+                $protocol = Protocol::create([
+                    'title' => $data['title'],
+                    'content' => $data['content'],
+                    'author' => $user ? $user->name : 'Anonymous',
+                ]);
 
-        return $protocol;
+                // Sync tags
+                if (isset($data['tags']) && is_array($data['tags'])) {
+                    $tagIds = collect($data['tags'])->map(function ($tagName) {
+                        return Tag::firstOrCreate(['tag' => trim($tagName)])->id;
+                    })->toArray();
+                    $protocol->tags()->sync($tagIds);
+                }
+
+                // Load relationships for search indexing
+                $protocol->load(['tags', 'reviews', 'threads']);
+                $protocol->loadCount(['reviews', 'threads']);
+
+                return $protocol;
+            });
+        } catch (ValidationException $e) {
+            throw $e;
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t create the protocol due to a server error. Please try again.';
+
+            throw ValidationException::withMessages([
+                'protocol' => [$message],
+            ]);
+        }
+    }
+
+    /**
+     * Update an existing protocol.
+     *
+     * @param string $id
+     * @param ProtocolRequest $request
+     * @return Protocol
+     * @throws ValidationException
+     */
+    public function update(string $id, ProtocolRequest $request): Protocol
+    {
+        try {
+            return DB::transaction(function () use ($id, $request) {
+                $protocol = Protocol::findOrFail($id);
+                $user = $request->user();
+
+                if ($protocol->author !== $user->name) {
+                    throw new \Exception('You can only update protocols that you created.');
+                }
+
+                $data = $request->validated();
+
+                $protocol->fill([
+                    'title' => $data['title'] ?? $protocol->title,
+                    'content' => $data['content'] ?? $protocol->content,
+                ]);
+                $protocol->save();
+
+                // Sync tags if provided
+                if (isset($data['tags']) && is_array($data['tags'])) {
+                    $tagIds = collect($data['tags'])->map(function ($tagName) {
+                        return Tag::firstOrCreate(['tag' => trim($tagName)])->id;
+                    })->toArray();
+                    $protocol->tags()->sync($tagIds);
+                }
+
+                $protocol->load(['tags']);
+                $protocol->loadCount(['reviews', 'threads']);
+
+                return $protocol;
+            });
+        } catch (ValidationException $e) {
+            throw $e;
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t update the protocol due to a server error. Please try again.';
+
+            throw ValidationException::withMessages([
+                'protocol' => [$message],
+            ]);
+        }
+    }
+
+    /**
+     * Delete a protocol.
+     *
+     * @param string $id
+     * @return void
+     * @throws ValidationException
+     */
+    public function destroy(string $id): void
+    {
+        try {
+            DB::transaction(function () use ($id) {
+                $protocol = Protocol::findOrFail($id);
+                $user = Auth::user();
+
+                if ($protocol->author !== $user->name) {
+                    throw new \Exception('You can only delete protocols that you created.');
+                }
+
+                $protocol->delete();
+            });
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'We couldn\'t delete the protocol due to a server error. Please try again.';
+
+            throw ValidationException::withMessages([
+                'protocol' => [$message],
+            ]);
+        }
     }
 
     /**
@@ -128,7 +298,9 @@ class ProtocolService
      */
     public function getProtocolStats($id): ?array
     {
-        $protocol = Protocol::withCount(['reviews', 'threads'])
+        $protocol = Protocol::with(['tags'])
+            ->withCount(['reviews', 'threads'])
+            ->withAvg('reviews', 'rating')
             ->with(['reviews' => function ($query) {
                 $query->select('protocol_id', 'rating');
             }])
@@ -138,7 +310,7 @@ class ProtocolService
 
         $reviewsCount = $protocol->getAttribute('reviews_count') ?? 0;
         $threadsCount = $protocol->getAttribute('threads_count') ?? 0;
-        $averageRating = round($protocol->getAverageRatingAttribute(), 2);
+        $averageRating = round($protocol->getAttribute('reviews_avg_rating') ?? 0.0, 2);
         $distribution = $this->getRatingDistribution($id, $protocol->reviews);
 
         return [

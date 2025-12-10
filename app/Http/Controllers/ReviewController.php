@@ -2,11 +2,10 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Review;
-use App\Models\Protocol;
 use App\Services\ReviewService;
-use App\DTOs\ApiResponse;
-use App\DTOs\PaginationDTO;
+use App\Http\Resources\ApiResponseResource;
+use App\Http\Resources\ReviewResource;
+use App\Http\Resources\PaginationResource;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -14,17 +13,12 @@ use Illuminate\Http\Request;
  * Review Management Controller
  *
  * Handles all review and rating operations for research protocols including
- * creating, reading, updating, and deleting reviews. Supports comprehensive
- * rating systems, review analytics, and smart highlighting for enhanced
- * user experience across protocol discussions.
+ * creating, reading, updating, and deleting reviews.
  *
  * Features:
  * - Complete CRUD operations for protocol reviews
  * - Star-based rating system (1-5 stars)
- * - Review analytics and statistics
  * - Author-based filtering and search
- * - Smart highlighting for cross-page review visibility
- * - Review voting and helpfulness tracking
  *
  * @package App\Http\Controllers
  * @author Christian Bangay
@@ -34,7 +28,7 @@ use Illuminate\Http\Request;
  * @see App\Services\ReviewService
  * @see App\Models\Review
  * @see App\Models\Protocol
- * @see App\DTOs\ReviewDTO
+ * @see App\Http\Resources\ReviewResource
  */
 class ReviewController extends Controller
 {
@@ -49,185 +43,91 @@ class ReviewController extends Controller
      * Display reviews for a protocol.
      *
      * @param  \Illuminate\Http\Request  $request
-     * @param  int  $protocolId  The ID of the protocol
+     * @param  string  $protocolId  The ID of the protocol
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException When protocol not found
-     * @throws \Exception When fetching reviews fails due to server error
      */
-    public function index(Request $request, int $protocolId): JsonResponse
+    public function index(Request $request, string $protocolId): JsonResponse
     {
-        try {
-            $protocol = Protocol::findOrFail($protocolId);
-            $reviews = $this->reviewService->getProtocolReviews($protocol, $request);
+        $paginator = $this->reviewService->index($protocolId, $request);
 
-            // Transform reviews to array format
-            $reviewsArray = $reviews->items();
-            if (count($reviewsArray) > 0 && $reviewsArray[0] instanceof \App\DTOs\ReviewDTO) {
-                $reviewsArray = array_map(function ($reviewDto) {
-                    return $reviewDto->toArray();
-                }, $reviewsArray);
-            }
+        $reviewResources = ReviewResource::collection($paginator)->toArray($request);
+        $paginationResource = PaginationResource::fromPaginator($paginator);
 
-            // Create pagination DTO
-            $paginationDTO = PaginationDTO::fromPaginator($reviews);
-
-            return ApiResponse::successWithPagination(
-                data: $reviewsArray,
-                pagination: $paginationDTO->toArray(),
-                message: 'Reviews fetched successfully.'
-            )->toJsonResponse();
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return ApiResponse::error(
-                message: 'Protocol not found',
-                statusCode: 404,
-                data: 'The requested protocol does not exist.'
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            return ApiResponse::error(
-                message: 'Failed to fetch reviews',
-                statusCode: 500,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        }
+        return ApiResponseResource::successWithPagination(
+            data: $reviewResources,
+            pagination: $paginationResource->toArray(),
+            message: 'Reviews fetched successfully.'
+        )->toJsonResponse();
     }
 
     /**
      * Store a newly created review.
      *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  int  $protocolId  The ID of the protocol
+     * @param  \App\Http\Requests\ReviewRequest  $request
+     * @param  string  $protocolId  The ID of the protocol
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException When protocol not found
-     * @throws \Illuminate\Validation\ValidationException When validation fails
-     * @throws \Exception When review creation fails due to server error
      */
-    public function store(Request $request, int $protocolId): JsonResponse
+    public function store(\App\Http\Requests\ReviewRequest $request, string $protocolId): JsonResponse
     {
-        try {
-            $protocol = Protocol::findOrFail($protocolId);
+        $review = $this->reviewService->store($protocolId, $request);
+        $reviewResource = new ReviewResource($review);
 
-            $validated = $request->validate([
-                'rating' => ['required', 'integer', 'min:1', 'max:5'],
-                'feedback' => ['nullable', 'string'],
-            ]);
-
-            $reviewDto = $this->reviewService->createReview($protocol, $request->user(), $validated);
-
-            return ApiResponse::success(
-                data: $reviewDto->toArray(),
-                message: 'Review created successfully.',
-                statusCode: 201
-            )->toJsonResponse();
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return ApiResponse::error(
-                message: 'Protocol not found',
-                statusCode: 404,
-                data: 'The requested protocol does not exist.'
-            )->toJsonResponse();
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            return ApiResponse::error(
-                message: 'Validation failed',
-                statusCode: 422,
-                data: $e->errors()
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            return ApiResponse::error(
-                message: 'Failed to create review',
-                statusCode: 500,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        }
+        return ApiResponseResource::success(
+            message: 'Review created successfully.',
+            data: $reviewResource->toArray($request),
+            statusCode: 201
+        )->toJsonResponse();
     }
 
     /**
      * Update an existing review.
      *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  int  $protocolId  The ID of the protocol
+     * @param  \App\Http\Requests\ReviewRequest  $request
+     * @param  string  $id  The ID of the review
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException When review not found
-     * @throws \Exception When review update fails due to server error
      */
-    public function update(Request $request): JsonResponse
+    public function update(\App\Http\Requests\ReviewRequest $request, string $id): JsonResponse
     {
-        try {
-            $review = $this->reviewService->getReview($request->route('id'));
+        $review = $this->reviewService->update($id, $request);
+        $reviewResource = new ReviewResource($review);
 
-            $validated = $request->validate([
-                'rating' => ['sometimes', 'integer', 'min:1', 'max:5'],
-                'feedback' => ['sometimes', 'string'],
-            ]);
+        return ApiResponseResource::success(
+            message: 'Review updated successfully.',
+            data: $reviewResource->toArray($request)
+        )->toJsonResponse();
+    }
 
-            $reviewDto = $this->reviewService->updateReview($review, $request->user(), $validated);
+    /**
+     * Show a single review.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @param  string  $id  The ID of the review
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function show(Request $request, string $id): JsonResponse
+    {
+        $review = $this->reviewService->show($id, $request);
+        $reviewResource = new ReviewResource($review);
 
-            return ApiResponse::success(
-                data: $reviewDto->toArray(),
-                message: 'Review updated successfully.'
-            )->toJsonResponse();
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return ApiResponse::error(
-                message: 'Review not found',
-                statusCode: 404,
-                data: 'The requested review does not exist.'
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            // Check if this is an authorization error
-            if (str_contains($e->getMessage(), 'You can only update reviews that you created')) {
-                return ApiResponse::error(
-                    message: 'Unauthorized',
-                    statusCode: 403,
-                    data: $e->getMessage()
-                )->toJsonResponse();
-            }
-
-            return ApiResponse::error(
-                message: 'Failed to update review',
-                statusCode: 500,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        }
+        return ApiResponseResource::success(
+            message: 'Review fetched successfully.',
+            data: $reviewResource->toArray($request)
+        )->toJsonResponse();
     }
 
     /**
      * Remove the specified review.
      *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  int  $id  The ID of the review
+     * @param  string  $id  The ID of the review
      * @return \Illuminate\Http\JsonResponse
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException When review not found
-     * @throws \Exception When review deletion fails due to server error
      */
-    public function destroy(Request $request, int $id): JsonResponse
+    public function destroy(string $id): JsonResponse
     {
-        try {
-            $review = $this->reviewService->getReview($id);
-            $this->reviewService->deleteReview($review, $request->user());
+        $this->reviewService->destroy($id);
 
-            return ApiResponse::success(
-                data: null,
-                message: 'Review deleted successfully.'
-            )->toJsonResponse();
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return ApiResponse::error(
-                message: 'Review not found',
-                statusCode: 404,
-                data: 'The requested review does not exist.'
-            )->toJsonResponse();
-        } catch (\Exception $e) {
-            // Check if this is an authorization error
-            if (str_contains($e->getMessage(), 'You can only delete reviews that you created')) {
-                return ApiResponse::error(
-                    message: 'Unauthorized',
-                    statusCode: 403,
-                    data: $e->getMessage()
-                )->toJsonResponse();
-            }
-
-            return ApiResponse::error(
-                message: 'Failed to delete review',
-                statusCode: 500,
-                data: $e->getMessage()
-            )->toJsonResponse();
-        }
+        return ApiResponseResource::success(
+            message: 'Review deleted successfully.',
+            data: null
+        )->toJsonResponse();
     }
 }
