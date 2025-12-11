@@ -82,13 +82,14 @@ class AuthService
         try {
             $credentials = $request->validated();
 
-            if (!Auth::attempt($credentials)) {
+            $user = User::where('email', $credentials['email'])->first();
+
+            if (!$user || !Hash::check($credentials['password'], $user->password)) {
                 throw ValidationException::withMessages([
                     'email' => ['The provided credentials are incorrect.'],
                 ]);
             }
 
-            $user = User::where('email', $credentials['email'])->firstOrFail();
             $token = $user->createToken('auth-token')->plainTextToken;
 
             return [
