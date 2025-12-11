@@ -53,19 +53,7 @@ class DatabaseSeeder extends Seeder
         );
 
         // Create regular users
-        $usersData = User::factory()->count(5)->make()->map(function ($user) {
-            return [
-                'id' => (string) Str::uuid(),
-                'name' => $user->name,
-                'email' => $user->email,
-                'email_verified_at' => $user->email_verified_at ? $user->email_verified_at->format('Y-m-d H:i:s') : null,
-                'password' => $user->password,
-                'remember_token' => $user->remember_token,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ];
-        })->toArray();
-        User::insert($usersData);
+        User::factory()->count(5)->create();
         $users = User::all();
 
         // Create protocols with realistic wellness data - use actual user names as authors
@@ -144,7 +132,6 @@ class DatabaseSeeder extends Seeder
             ],
         ];
 
-        DB::beginTransaction();
         DB::beginTransaction();
         $createdProtocols = [];
         try {
@@ -226,7 +213,6 @@ class DatabaseSeeder extends Seeder
             // Create 2-3 threads per protocol
             $threadCount = rand(2, 3);
             $threadData = [];
-            $threadData = [];
             for ($i = 0; $i < $threadCount; $i++) {
                 $threadData[] = [
                     'id' => (string) Str::uuid(),
@@ -237,12 +223,7 @@ class DatabaseSeeder extends Seeder
                     'created_at' => now(),
                     'updated_at' => now(),
                 ];
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ];
             }
-            Thread::insert($threadData);
-            $createdThreads = array_merge($createdThreads, Thread::where('protocol_id', $protocol->getKey())->get()->all());
             Thread::insert($threadData);
             $createdThreads = array_merge($createdThreads, Thread::where('protocol_id', $protocol->getKey())->get()->all());
         }
@@ -267,7 +248,6 @@ class DatabaseSeeder extends Seeder
             $commentCount = rand(3, 6);
             $threadComments = [];
 
-            $commentData = [];
             $commentData = [];
             for ($i = 0; $i < $commentCount; $i++) {
                 $commentData[] = [
@@ -316,7 +296,6 @@ class DatabaseSeeder extends Seeder
 
             // Vote on threads - ensure unique votes per user
             $threadVoteData = [];
-            $threadVoteData = [];
             $threadVoters = $users->random(min(3, $users->count()));
             foreach ($threadVoters as $user) {
                 $threadVoteData[] = [
@@ -331,16 +310,9 @@ class DatabaseSeeder extends Seeder
             }
             if (!empty($threadVoteData)) {
                 Vote::insert($threadVoteData);
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ];
-            }
-            if (!empty($threadVoteData)) {
-                Vote::insert($threadVoteData);
             }
 
             // Vote on comments - ensure unique votes per user
-            $commentVoteData = [];
             $commentVoteData = [];
             foreach ($threadComments as $comment) {
                 $commentVoters = $users->random(min(2, $users->count()));
@@ -354,13 +326,7 @@ class DatabaseSeeder extends Seeder
                         'created_at' => now(),
                         'updated_at' => now(),
                     ];
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ];
                 }
-            }
-            if (!empty($commentVoteData)) {
-                Vote::insert($commentVoteData);
             }
             if (!empty($commentVoteData)) {
                 Vote::insert($commentVoteData);
@@ -405,10 +371,6 @@ class DatabaseSeeder extends Seeder
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
-            DB::commit();
-        } catch (\Exception $e) {
-            DB::rollBack();
-            throw $e;
         }
 
         $this->command->info('Database seeded successfully!');
@@ -419,6 +381,5 @@ class DatabaseSeeder extends Seeder
         $this->command->info('- ' . Comment::count() . ' comments');
         $this->command->info('- ' . Review::count() . ' reviews');
         $this->command->info('- ' . Vote::count() . ' votes');
-        $this->command->info('Database seeded successfully!');
     }
 }

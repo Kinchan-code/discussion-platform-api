@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('votes', function (Blueprint $table) {
             $table->uuid('id')->primary();
-            $table->foreignUuid('user_id')->nullable(); // optional, for future extension
+            $table->foreignId('user_id')->nullable(); // optional, for future extension
             $table->string('votable_type');
             $table->uuid('votable_id');
             $table->enum('type', ['upvote', 'downvote']);

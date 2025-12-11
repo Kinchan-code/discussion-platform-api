@@ -16,7 +16,7 @@ return new class extends Migration
             $table->uuid('comment_id');
             $table->uuid('parent_id')->nullable();
             $table->uuid('reply_to_id')->nullable();
-            $table->uuid('user_id')->nullable();
+            $table->foreignId('user_id')->nullable();
             $table->text('body');
             $table->string('author');
             $table->timestamps();

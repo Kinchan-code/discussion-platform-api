@@ -9,6 +9,7 @@ use App\Http\Requests\ProtocolRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Throwable;
 
@@ -173,12 +174,35 @@ class ProtocolService
                     'author' => $user ? $user->name : 'Anonymous',
                 ]);
 
-                // Sync tags
+                // Attach tags with UUID generation for pivot table
                 if (isset($data['tags']) && is_array($data['tags'])) {
                     $tagIds = collect($data['tags'])->map(function ($tagName) {
                         return Tag::firstOrCreate(['tag' => trim($tagName)])->id;
                     })->toArray();
-                    $protocol->tags()->sync($tagIds);
+                    
+                    // Insert pivot records directly with UUIDs
+                    $pivotData = [];
+                    foreach ($tagIds as $tagId) {
+                        // Check if the relationship already exists
+                        $exists = DB::table('protocol_tag')
+                            ->where('protocol_id', $protocol->id)
+                            ->where('tag_id', $tagId)
+                            ->exists();
+                        
+                        if (!$exists) {
+                            $pivotData[] = [
+                                'id' => (string) Str::uuid(),
+                                'protocol_id' => $protocol->id,
+                                'tag_id' => $tagId,
+                                'created_at' => now(),
+                                'updated_at' => now(),
+                            ];
+                        }
+                    }
+                    
+                    if (!empty($pivotData)) {
+                        DB::table('protocol_tag')->insert($pivotData);
+                    }
                 }
 
                 // Load relationships for search indexing
@@ -229,12 +253,30 @@ class ProtocolService
                 ]);
                 $protocol->save();
 
-                // Sync tags if provided
+                // Sync tags if provided (with UUID generation for pivot table)
                 if (isset($data['tags']) && is_array($data['tags'])) {
                     $tagIds = collect($data['tags'])->map(function ($tagName) {
                         return Tag::firstOrCreate(['tag' => trim($tagName)])->id;
                     })->toArray();
-                    $protocol->tags()->sync($tagIds);
+                    
+                    // Remove existing tags
+                    DB::table('protocol_tag')->where('protocol_id', $protocol->id)->delete();
+                    
+                    // Insert new tags with UUIDs
+                    $pivotData = [];
+                    foreach ($tagIds as $tagId) {
+                        $pivotData[] = [
+                            'id' => (string) Str::uuid(),
+                            'protocol_id' => $protocol->id,
+                            'tag_id' => $tagId,
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ];
+                    }
+                    
+                    if (!empty($pivotData)) {
+                        DB::table('protocol_tag')->insert($pivotData);
+                    }
                 }
 
                 $protocol->load(['tags']);
